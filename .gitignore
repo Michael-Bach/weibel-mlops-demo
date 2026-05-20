@@ -19,3 +19,7 @@ wandb/
 # DVC internals (keep .dvc/ itself, ignore cache)
 .dvc/cache/
 .dvc/tmp/artifacts/
+wandb/
+.env
+wandb/
+.env

@@ -3,10 +3,12 @@
 Training loop for RadarClassifier.
 
 Reads all hyperparameters from params.yaml.
+Logs metrics and config to W&B.
 Saves best model checkpoint based on validation accuracy.
 Exits with code 1 if accuracy is below baseline threshold (for CI gating).
 """
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -16,6 +18,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import yaml
+import wandb
 
 from src.models.classifier import build_model
 
@@ -60,6 +63,17 @@ def train(params_path: str = "params.yaml") -> float:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    # Initialize W&B run
+    run = wandb.init(
+        project="weibel-mlops-demo",
+        config={
+            "data": params["data"],
+            "model": params["model"],
+            "training": params["training"],
+        },
+        tags=["synthetic", "radar", "mlp"],
+    )
+
     train_loader, val_loader = load_data(params)
     model = build_model(params_path).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=tp["learning_rate"])
@@ -82,11 +96,34 @@ def train(params_path: str = "params.yaml") -> float:
 
         val_acc = evaluate(model, val_loader, device)
         avg_loss = total_loss / len(train_loader)
+
+        # Log to W&B every epoch
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": avg_loss,
+            "val_accuracy": val_acc,
+        })
+
         print(f"Epoch {epoch+1:02d}/{tp['epochs']} | loss: {avg_loss:.4f} | val_acc: {val_acc:.4f}")
 
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(model.state_dict(), artifacts / "model_best.pt")
+
+    # Log best accuracy as a summary metric
+    wandb.summary["best_val_accuracy"] = best_acc
+
+    # Log model artifact to W&B
+    artifact = wandb.Artifact(
+        name="radar-classifier",
+        type="model",
+        description="MLP trained on synthetic radar signals",
+        metadata={"val_accuracy": best_acc},
+    )
+    artifact.add_file(str(artifacts / "model_best.pt"))
+    run.log_artifact(artifact)
+
+    wandb.finish()
 
     # Write metrics for CI gate
     metrics = {"val_accuracy": best_acc}
@@ -94,7 +131,7 @@ def train(params_path: str = "params.yaml") -> float:
         json.dump(metrics, f, indent=2)
     print(f"\nBest val accuracy: {best_acc:.4f}")
 
-    # CI gate — exit 1 if below baseline
+    # CI gate
     baseline = tp["baseline_accuracy"]
     if best_acc < baseline:
         print(f"FAILED: {best_acc:.4f} < baseline {baseline}")
