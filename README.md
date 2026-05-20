@@ -11,6 +11,37 @@ Built as a learning artifact — see [Architecture](#architecture) for
 design decisions and [What I'd Do Differently](#production-notes) for 
 production scaling notes.
 
+## Repo Structure
+
+weibel-mlops-demo/
+├── data/                    # DVC-tracked, git-ignored
+│   ├── raw/                 # synthetic .npy files
+│   └── processed/           # train/val splits
+├── src/
+│   ├── data/
+│   │   └── generate.py      # synthetic radar signal generator
+│   ├── models/
+│   │   └── classifier.py    # PyTorch MLP
+│   ├── training/
+│   │   └── train.py         # training loop + W&B
+│   └── inference/
+│       └── predict_onnx.py  # ONNX inference script
+├── scripts/
+│   └── export_onnx.py       # model → ONNX
+├── tests/
+│   ├── test_datagen.py
+│   ├── test_model.py
+│   └── test_onnx.py
+├── .github/workflows/
+│   └── ml_pipeline.yml      # full CI/CD
+├── .dvc/                    # DVC internals
+├── data.dvc                 # DVC pointer file
+├── params.yaml              # single source of truth for hyperparams
+├── pyproject.toml           # ruff + pytest config
+├── requirements.txt
+├── Dockerfile
+└── README.md
+
 ## Pipeline Overview
 
 ```mermaid
