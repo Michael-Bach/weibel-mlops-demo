@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+dist/
+
+# Data — tracked by DVC, not git
+data/raw/
+data/processed/
+
+# Artifacts
+artifacts/
+*.onnx
+
+# Secrets
+.env
+wandb/
+
+# DVC internals (keep .dvc/ itself, ignore cache)
+.dvc/cache/
+.dvc/tmp/
