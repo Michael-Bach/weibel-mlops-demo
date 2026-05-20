@@ -1,0 +1,74 @@
+name: ML Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Setup ────────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── Code quality ─────────────────────────────────────────────────────────
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # ── Unit tests ───────────────────────────────────────────────────────────
+      - name: Unit tests (pytest)
+        run: pytest tests/ -v
+
+      # ── Data generation ──────────────────────────────────────────────────────
+      - name: Generate synthetic radar data
+        run: PYTHONPATH=. python src/data/generate.py
+
+      # ── Training ─────────────────────────────────────────────────────────────
+      - name: Train model
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: PYTHONPATH=. python src/training/train.py
+
+      # ── Evaluate against baseline ─────────────────────────────────────────────
+      - name: Evaluate — enforce accuracy baseline
+        run: |
+          python - <<'EOF'
+          import json, sys
+          with open("artifacts/metrics.json") as f:
+              metrics = json.load(f)
+          acc = metrics["val_accuracy"]
+          baseline = 0.80
+          print(f"val_accuracy: {acc:.4f}  baseline: {baseline}")
+          if acc < baseline:
+              print(f"FAILED: {acc:.4f} < {baseline}")
+              sys.exit(1)
+          print(f"PASSED")
+          EOF
+
+      # ── ONNX export ───────────────────────────────────────────────────────────
+      - name: Export ONNX model
+        run: PYTHONPATH=. python scripts/export_onnx.py
+
+      # ── Upload artifacts ──────────────────────────────────────────────────────
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            artifacts/model_best.pt
+            artifacts/model.onnx
+            artifacts/metrics.json
+          retention-days: 30

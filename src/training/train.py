@@ -8,18 +8,17 @@ Saves best model checkpoint based on validation accuracy.
 Exits with code 1 if accuracy is below baseline threshold (for CI gating).
 """
 
-import os
-import sys
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 import yaml
-import wandb
+from torch.utils.data import DataLoader, TensorDataset
 
+import wandb
 from src.models.classifier import build_model
 
 

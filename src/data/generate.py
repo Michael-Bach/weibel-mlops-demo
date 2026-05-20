@@ -9,9 +9,10 @@ Signal model:
 All parameters driven from params.yaml for full reproducibility.
 """
 
+from pathlib import Path
+
 import numpy as np
 import yaml
-from pathlib import Path
 
 
 def load_params(params_path: str = "params.yaml") -> dict:
