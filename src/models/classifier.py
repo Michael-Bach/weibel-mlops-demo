@@ -17,7 +17,9 @@ def load_params(params_path: str = "params.yaml") -> dict:
 
 
 class RadarClassifier(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: list[int], dropout: float, use_fft: bool = False):
+    def __init__(
+        self, input_dim: int, hidden_dims: list[int], dropout: float, use_fft: bool = False
+    ):
         super().__init__()
         self.use_fft = use_fft
 
