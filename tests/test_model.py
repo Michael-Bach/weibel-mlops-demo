@@ -56,3 +56,20 @@ def test_eval_mode_is_deterministic(model):
     out1 = model(x)
     out2 = model(x)
     assert torch.allclose(out1, out2)
+
+
+def test_fft_mode_output_shape():
+    # rfft of length-N input produces N//2+1 bins; model must account for this
+    m = RadarClassifier(input_dim=INPUT_DIM, hidden_dims=[32], dropout=0.0, use_fft=True)
+    m.eval()
+    x = torch.randn(BATCH_SIZE, INPUT_DIM)
+    out = m(x)
+    assert out.shape == (BATCH_SIZE, 2)
+
+
+def test_fft_mode_matches_params():
+    model = build_model("params.yaml")
+    assert model.use_fft is True
+    x = torch.randn(2, 128)  # raw time-domain signals
+    out = model(x)
+    assert out.shape == (2, 2)

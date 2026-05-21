@@ -17,11 +17,15 @@ def load_params(params_path: str = "params.yaml") -> dict:
 
 
 class RadarClassifier(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: list[int], dropout: float):
+    def __init__(self, input_dim: int, hidden_dims: list[int], dropout: float, use_fft: bool = False):
         super().__init__()
+        self.use_fft = use_fft
+
+        # rfft of a length-N signal produces N//2+1 unique frequency bins
+        feature_dim = input_dim // 2 + 1 if use_fft else input_dim
 
         layers = []
-        prev_dim = input_dim
+        prev_dim = feature_dim
         for hidden_dim in hidden_dims:
             layers += [
                 nn.Linear(prev_dim, hidden_dim),
@@ -35,6 +39,9 @@ class RadarClassifier(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_fft:
+            # Real FFT: [B, N] → magnitude spectrum [B, N//2+1]
+            x = torch.fft.rfft(x, dim=1).abs()
         return self.net(x)
 
 
@@ -44,6 +51,7 @@ def build_model(params_path: str = "params.yaml") -> RadarClassifier:
         input_dim=params["data"]["signal_length"],
         hidden_dims=params["model"]["hidden_dims"],
         dropout=params["model"]["dropout"],
+        use_fft=params["model"].get("use_fft", False),
     )
 
 
