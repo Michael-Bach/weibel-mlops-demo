@@ -8,46 +8,42 @@ pipeline. The signal model is intentionally simple — the pipeline architecture
 ## 1. Architecture Overview
 
 ```mermaid
-flowchart TD
-    P([params.yaml\nsingle source of truth])
+flowchart LR
+    P([params.yaml])
 
-    subgraph Data
-        P --> G[generate.py\nSynthetic radar signals]
-        G --> DVC[(DVC cache\ndata/raw  data/processed)]
-    end
-
-    subgraph Training
-        DVC --> T[train.py\nPyTorch MLP + FFT layer]
-        P --> T
-        T --> WB([W&B\nmetrics + artifact lineage])
-        T --> M[(artifacts/\nmodel_best.pt\nmetrics.json)]
-    end
-
-    subgraph Export
-        M --> X[export_onnx.py\nONNX export]
-        X --> O[(artifacts/model.onnx\ndynamic batch axis)]
-    end
-
-    subgraph Serving
-        O --> S[serve.py\nFastAPI + uvicorn]
-        S --> D[Docker image\n~250 MB, no PyTorch]
-        D --> K[Kubernetes\nJob + Deployment + Service]
-    end
-
-    subgraph CI["GitHub Actions — ml_pipeline.yml"]
+    subgraph train ["Training Pipeline (CI / K8s Job)"]
         direction LR
-        L[ruff lint] --> UT[pytest 19 tests]
-        UT --> GD[generate data]
-        GD --> TR[train]
-        TR --> EV{val_acc ≥ 0.80?}
-        EV -->|pass| EX[export ONNX]
-        EV -->|fail| STOP([pipeline fails])
-        EX --> UP[upload artifacts]
+        P --> G[generate.py]
+        G --> T[train.py\nPyTorch + FFT]
+        T --> WB([W&B])
+        T --> X[export_onnx.py]
+        X --> O[(model.onnx)]
+    end
+
+    subgraph serve ["Serving (Kubernetes)"]
+        direction LR
+        O --> D[Docker image\nonnxruntime + FastAPI]
+        D --> K[Deployment\n2 replicas]
+        K --> API([POST /predict])
+    end
+
+    subgraph ci ["CI Gate (GitHub Actions)"]
+        direction LR
+        L[ruff] --> UT[pytest]
+        UT --> TR[train]
+        TR --> EV{acc ≥ 0.80?}
+        EV -->|pass| EX[export + upload]
+        EV -->|fail| STOP([block merge])
     end
 ```
 
-Everything is driven from `params.yaml` — one file controls signal length, SNR range, model
-architecture, learning rate, and the accuracy baseline the CI gate enforces.
+Two independent pipelines share `model.onnx` as the handoff point:
+
+- **Training pipeline** — runs in CI (or as a Kubernetes Job). Produces and validates `model.onnx`.
+- **Serving pipeline** — packages `model.onnx` into a Docker image and deploys it to Kubernetes.
+
+You don't retrain to deploy. Training runs when the code or data changes. Deployment runs when
+you want to promote a validated model. `params.yaml` is the single source of truth for both.
 
 ---
 
