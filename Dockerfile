@@ -1,5 +1,4 @@
-# Inference serving image — no PyTorch, no W&B, no DVC.
-# Training runs in CI; this image is the deployment artifact.
+# Inference serving image — no PyTorch, no MLflow, no DVC.
 FROM python:3.11-slim
 
 WORKDIR /app

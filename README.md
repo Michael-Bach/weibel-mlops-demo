@@ -73,7 +73,7 @@ python src/data/generate.py
 **Step 3 — Train the model**
 ```bash
 python src/training/train.py
-# Logs loss + val_accuracy to W&B every epoch
+# Logs loss + val_accuracy to MLflow every epoch
 # Writes artifacts/model_best.pt and artifacts/metrics.json
 # Exits with code 1 if val_accuracy < 0.80
 ```
@@ -103,7 +103,7 @@ ruff lint → pytest → generate data → train → evaluate → export ONNX �
 
 CI runs training on every push as a fast validation pass — small dataset, CPU only, confirms
 the pipeline is not broken. Production training runs happen on Kubernetes (section 5), where
-multiple param sweeps run in parallel and land in W&B for comparison.
+multiple param sweeps run in parallel and land in MLflow for comparison.
 
 The quality gate is in `train.py`:
 ```python
@@ -115,8 +115,8 @@ The `evaluate` step reads `artifacts/metrics.json` and prints the accuracy expli
 Actions log. The ONNX file is uploaded as a build artifact — ready for hardware flashing
 without re-running the pipeline.
 
-Set `WANDB_API_KEY` as a GitHub Actions secret before pushing
-(Settings → Secrets and variables → Actions).
+No secrets required — MLflow writes to `./mlruns` locally. On a shared cluster, set
+`MLFLOW_TRACKING_URI` to point at the on-prem MLflow server.
 
 ---
 
@@ -125,31 +125,43 @@ Set `WANDB_API_KEY` as a GitHub Actions secret before pushing
 The training pipeline runs as a one-shot Kubernetes Job:
 
 ```bash
-kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
 docker build -f Dockerfile.train -t YOUR_REGISTRY/weibel-radar-train:latest .
 docker push YOUR_REGISTRY/weibel-radar-train:latest
 kubectl apply -f k8s/training-job.yaml
 ```
 
-`Dockerfile.train` contains the full training stack — PyTorch, W&B, DVC (~4 GB). The Job
+`Dockerfile.train` contains the full training stack — PyTorch, MLflow, DVC (~4 GB). The Job
 runs `generate → train → export` and writes `model.onnx` to a PersistentVolume. Multiple
-Jobs can be kicked off with different `params.yaml` values to produce a sweep of runs in W&B.
+Jobs can be kicked off with different `params.yaml` values to produce a sweep of runs in
+MLflow. The Job reads `MLFLOW_TRACKING_URI` from the environment to find the on-prem server.
 
 ---
 
-## 6. Experiment Tracking — W&B
+## 6. Experiment Tracking — MLflow
 
-Each training run logs:
-- `train_loss` and `val_accuracy` per epoch (with full config from `params.yaml`)
-- `best_val_accuracy` as a run summary metric
-- `model_best.pt` as a versioned W&B Artifact with lineage
+Each training run logs all hyperparameters from `params.yaml`, `train_loss` and
+`val_accuracy` per epoch, and `best_val_accuracy` as a summary metric. The best checkpoint
+is stored as a run artifact. Runs are written to `./mlruns` by default — no network, no
+account, no external service.
 
-Multiple runs with different hyperparameters or seeds appear side by side in the W&B
-dashboard. The operator selects the best run before triggering ONNX export — this is the
-human gate before any model touches hardware.
+**View the experiment dashboard:**
+```bash
+mlflow ui
+# Open http://localhost:5000
+```
+
+Multiple runs with different hyperparameters appear side by side. The operator selects the
+best run before triggering ONNX export — this is the human gate before any model touches
+hardware.
 
 To ablate the FFT step: set `use_fft: false` in `params.yaml`, retrain, and compare runs
-side by side in W&B.
+side by side in the MLflow UI.
+
+**On a shared cluster**, point all training Jobs at a central MLflow server:
+```bash
+export MLFLOW_TRACKING_URI=http://mlflow-server:5000
+```
+The server runs entirely on-prem — no data leaves the network.
 
 ---
 
@@ -195,8 +207,8 @@ Retraining should be triggered by data drift (PSI or KL divergence on incoming s
 statistics), not code commits. The model should retrain when the operating environment changes.
 
 **Model registry**
-W&B Artifacts provide basic lineage. A proper registry (W&B Model Registry, MLflow) adds
-promotion stages (staging → hardware release), rollback triggers, and audit trails.
+MLflow run artifacts provide basic lineage. A proper registry adds promotion stages
+(candidate → validated → released), rollback triggers, and audit trails.
 
 **Hardware-in-the-loop testing**
 Before flashing to the radar signal processor, the ONNX model should be validated against
@@ -215,7 +227,7 @@ velocity-range plane. The pipeline infrastructure is identical — only `classif
 | Tool | Role |
 |---|---|
 | PyTorch | Model training, FFT preprocessing layer |
-| W&B | Experiment tracking and artifact lineage |
+| MLflow | Experiment tracking and artifact lineage — fully self-hosted |
 | DVC | Data versioning |
 | ONNX + onnxruntime | Framework-agnostic export — targets edge hardware |
 | Docker | Training image |

@@ -1,4 +1,4 @@
-# Training image — full dependencies including PyTorch and W&B.
+# Training image — full dependencies including PyTorch and MLflow.
 # Built separately from the serving image; used by k8s/training-job.yaml.
 FROM python:3.11-slim
 

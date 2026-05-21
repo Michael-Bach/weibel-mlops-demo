@@ -11,11 +11,8 @@ spec:
         - name: trainer
           image: YOUR_REGISTRY/weibel-radar-train:latest
           env:
-            - name: WANDB_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: wandb-secret   # kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
-                  key: api-key
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-server:5000"  # point at your on-prem MLflow server
           resources:
             requests:
               cpu: "1"

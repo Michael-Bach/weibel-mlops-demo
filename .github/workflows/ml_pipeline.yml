@@ -38,8 +38,6 @@ jobs:
 
       # ── Training ─────────────────────────────────────────────────────────────
       - name: Train model
-        env:
-          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
         run: PYTHONPATH=. python src/training/train.py
 
       # ── Evaluate against baseline ─────────────────────────────────────────────
