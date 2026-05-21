@@ -26,7 +26,7 @@ jobs:
 
       # ── Code quality ─────────────────────────────────────────────────────────
       - name: Lint (ruff)
-        run: ruff check .
+        run: python -m ruff check .
 
       # ── Unit tests ───────────────────────────────────────────────────────────
       - name: Unit tests (pytest)
