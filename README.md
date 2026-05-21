@@ -8,42 +8,19 @@ pipeline. The signal model is intentionally simple — the pipeline architecture
 ## 1. Architecture Overview
 
 ```mermaid
-flowchart LR
-    P([params.yaml])
-
-    subgraph train ["Training Pipeline (CI / K8s Job)"]
-        direction LR
-        P --> G[generate.py]
-        G --> T[train.py\nPyTorch + FFT]
-        T --> WB([W&B])
-        T --> X[export_onnx.py]
-        X --> O[(model.onnx)]
-    end
-
-    subgraph serve ["Serving (Kubernetes)"]
-        direction LR
-        O --> D[Docker image\nonnxruntime + FastAPI]
-        D --> K[Deployment\n2 replicas]
-        K --> API([POST /predict])
-    end
-
-    subgraph ci ["CI Gate (GitHub Actions)"]
-        direction LR
-        L[ruff] --> UT[pytest]
-        UT --> TR[train]
-        TR --> EV{acc ≥ 0.80?}
-        EV -->|pass| EX[export + upload]
-        EV -->|fail| STOP([block merge])
-    end
+flowchart TD
+    G[1. generate.py\nSynthetic radar data] --> T[2. ruff + pytest\nLint and test]
+    T --> D[3. docker build\nDockerfile.train]
+    D --> K[4. kubectl apply\nK8s Job runs training\nmultiple runs / param sweeps]
+    K --> WB[5. W&B dashboard\nInspect runs\nSelect best model]
+    WB --> X[6. export_onnx.py\nExport selected model\nto ONNX format]
+    X --> S[7. docker build + push\nServing image]
+    S --> KS[8. kubectl apply\nDeployment + Service\nPOST /predict]
 ```
 
-Two independent pipelines share `model.onnx` as the handoff point:
-
-- **Training pipeline** — runs in CI (or as a Kubernetes Job). Produces and validates `model.onnx`.
-- **Serving pipeline** — packages `model.onnx` into a Docker image and deploys it to Kubernetes.
-
-You don't retrain to deploy. Training runs when the code or data changes. Deployment runs when
-you want to promote a validated model. `params.yaml` is the single source of truth for both.
+The pipeline has a deliberate human decision point at step 5. Multiple training runs land in
+W&B — different hyperparameters, different seeds — and the best model is selected before
+export. ONNX export is not automatic; it is a promotion decision.
 
 ---
 
