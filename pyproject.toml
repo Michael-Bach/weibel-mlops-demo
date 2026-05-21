@@ -4,10 +4,7 @@ target-version = "py311"
 exclude = [".git", "__pycache__", ".dvc"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["src"]
+select = ["E", "F", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
