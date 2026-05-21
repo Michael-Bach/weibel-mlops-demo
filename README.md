@@ -14,13 +14,14 @@ flowchart TD
     D --> K[4. kubectl apply\nK8s Job runs training\nmultiple runs / param sweeps]
     K --> WB[5. W&B dashboard\nInspect runs\nSelect best model]
     WB --> X[6. export_onnx.py\nExport selected model\nto ONNX format]
-    X --> S[7. docker build + push\nServing image]
-    S --> KS[8. kubectl apply\nDeployment + Service\nPOST /predict]
 ```
 
 The pipeline has a deliberate human decision point at step 5. Multiple training runs land in
 W&B — different hyperparameters, different seeds — and the best model is selected before
 export. ONNX export is not automatic; it is a promotion decision.
+
+The final artifact is `model.onnx`. In production it targets the signal preprocessing hardware
+inside the radar system.
 
 ---
 
@@ -40,8 +41,9 @@ into 65 frequency bins before the MLP layers. Targets produce a sharp spectral p
 produces a diffuse low-frequency spectrum. These are more linearly separable in frequency
 domain, which is why the model converges in the first few epochs.
 
-The FFT is baked into the ONNX graph, so the deployed model accepts raw time-domain signals
-and requires no preprocessing contract with the caller.
+The FFT is baked into the ONNX graph. The deployed model accepts raw time-domain signals
+directly from the radar receiver — no separate preprocessing step, no preprocessing contract
+between the model and the hardware it runs on.
 
 ---
 
@@ -99,131 +101,82 @@ Every push to `master` runs the full pipeline automatically:
 ruff lint → pytest → generate data → train → evaluate → export ONNX → upload artifacts
 ```
 
+CI runs training on every push as a fast validation pass — small dataset, CPU only, confirms
+the pipeline is not broken. Production training runs happen on Kubernetes (section 5), where
+multiple param sweeps run in parallel and land in W&B for comparison.
+
 The quality gate is in `train.py`:
 ```python
 if best_acc < baseline_accuracy:
     sys.exit(1)  # fails the CI job
 ```
 
-The `evaluate` step also reads `artifacts/metrics.json` and prints the number explicitly
-in the Actions log — an interviewer can read the result without understanding the training code.
+The `evaluate` step reads `artifacts/metrics.json` and prints the accuracy explicitly in the
+Actions log. The ONNX file is uploaded as a build artifact — ready for hardware flashing
+without re-running the pipeline.
 
 Set `WANDB_API_KEY` as a GitHub Actions secret before pushing
 (Settings → Secrets and variables → Actions).
 
 ---
 
-## 5. Experiment Tracking — W&B
+## 5. Kubernetes — Training at Scale
+
+The training pipeline runs as a one-shot Kubernetes Job:
+
+```bash
+kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
+docker build -f Dockerfile.train -t YOUR_REGISTRY/weibel-radar-train:latest .
+docker push YOUR_REGISTRY/weibel-radar-train:latest
+kubectl apply -f k8s/training-job.yaml
+```
+
+`Dockerfile.train` contains the full training stack — PyTorch, W&B, DVC (~4 GB). The Job
+runs `generate → train → export` and writes `model.onnx` to a PersistentVolume. Multiple
+Jobs can be kicked off with different `params.yaml` values to produce a sweep of runs in W&B.
+
+---
+
+## 6. Experiment Tracking — W&B
 
 Each training run logs:
 - `train_loss` and `val_accuracy` per epoch (with full config from `params.yaml`)
 - `best_val_accuracy` as a run summary metric
 - `model_best.pt` as a versioned W&B Artifact with lineage
 
+Multiple runs with different hyperparameters or seeds appear side by side in the W&B
+dashboard. The operator selects the best run before triggering ONNX export — this is the
+human gate before any model touches hardware.
+
 To ablate the FFT step: set `use_fft: false` in `params.yaml`, retrain, and compare runs
 side by side in W&B.
 
 ---
 
-## 6. Docker
-
-Two images — one for training, one for serving:
-
-| Image | Dockerfile | Contents | Size |
-|---|---|---|---|
-| `weibel-radar-train` | `Dockerfile.train` | PyTorch, W&B, DVC — full pipeline | ~4 GB |
-| `weibel-radar` | `Dockerfile` | onnxruntime, FastAPI, uvicorn only | ~250 MB |
-
-**Build and run the serving image:**
-```bash
-docker build -t weibel-radar:latest .
-docker run --rm -p 8080:8080 weibel-radar:latest
-```
-
-**Test the API:**
-```bash
-# Health check
-curl http://localhost:8080/health
-# {"status": "ok", "signal_length": 128}
-
-# Predict
-curl -X POST http://localhost:8080/predict \
-  -H "Content-Type: application/json" \
-  -d '{"signals": [[0.1, -0.3, 0.5, ...]]}'  # 128 floats per signal
-# {"predictions": [{"label": 1, "class": "target", "confidence": 0.923}]}
-```
-
----
-
-## 7. Kubernetes
-
-Three manifests cover the full pipeline on a cluster:
-
-| Manifest | Kind | What it does |
-|---|---|---|
-| `k8s/training-job.yaml` | Job | Runs generate → train → export as a one-shot container |
-| `k8s/deployment.yaml` | Deployment | Runs 2 replicas of the inference server |
-| `k8s/service.yaml` | Service | Routes port 80 → container port 8080 across replicas |
-
-**Run training as a Kubernetes Job:**
-```bash
-# Store W&B key as a K8s secret (once)
-kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
-
-# Build, push, and run
-docker build -f Dockerfile.train -t YOUR_REGISTRY/weibel-radar-train:latest .
-docker push YOUR_REGISTRY/weibel-radar-train:latest
-kubectl apply -f k8s/training-job.yaml
-kubectl wait --for=condition=complete job/radar-training
-```
-
-The training Job writes `model.onnx` to a shared PersistentVolume (`model-store-pvc`).
-The serving Deployment mounts the same PVC, so no image rebuild is needed when the model updates.
-
-**Deploy the inference server:**
-```bash
-docker build -t YOUR_REGISTRY/weibel-radar:latest .
-docker push YOUR_REGISTRY/weibel-radar:latest
-kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
-kubectl rollout status deployment/radar-inference
-```
-
-The `readinessProbe` and `livenessProbe` both hit `GET /health`. A pod that fails to load
-the ONNX model never passes the readiness check — bad model versions never receive traffic.
-
-**Zero-downtime model update:**
-```bash
-kubectl set image deployment/radar-inference radar-inference=YOUR_REGISTRY/weibel-radar:v2
-kubectl rollout status deployment/radar-inference
-```
-
----
-
-## 8. Key Design Decisions
+## 7. Key Design Decisions
 
 **`params.yaml` as single source of truth**
 All hyperparameters live in one file. Every component reads from it. Changing an experiment
 means one edit, not hunting through script arguments.
 
 **FFT baked into the model graph**
-`torch.fft.rfft` runs inside `RadarClassifier.forward()`. The ONNX export therefore takes
-raw time-domain signals — the deployed model is self-contained, no preprocessing required.
+`torch.fft.rfft` runs inside `RadarClassifier.forward()`. The ONNX export therefore accepts
+raw time-domain signals — no preprocessing contract between the model and the hardware it
+runs on. The signal processor feeds samples directly into the graph.
+
+**ONNX as the deployment artifact**
+ONNX decouples training from runtime. The exported `.onnx` file can be compiled for the
+target hardware without retraining — ONNX Runtime for embedded Linux, TensorRT for NVIDIA
+Jetson, OpenVINO for Intel silicon, or FPGA toolchains such as Xilinx Vitis AI that accept
+ONNX as input. No retraining, no re-export.
 
 **`sys.exit(1)` as the CI gate**
 The quality gate is intrinsic to the training step. The pipeline can't silently promote
 a bad model — it has to actively pass.
 
 **ONNX with dynamic batch axis**
-The same exported model handles single-sample edge requests and large batched scoring jobs.
-No re-export needed.
-
-**Inference-only serving image**
-The serving image has no PyTorch. ~250 MB vs ~4 GB. Faster Kubernetes rollouts, deployable
-to resource-constrained environments.
-
-**Shared PVC between training Job and serving Deployment**
-The training Job writes `model.onnx` to a PersistentVolume. The serving pods read from it.
-Model updates don't require rebuilding the serving image.
+The same exported model handles single-sample real-time returns and large batched evaluation
+jobs. No re-export needed when the batch size changes.
 
 **DVC local cache only**
 Data is versioned but no remote is configured. In production: one line —
@@ -231,7 +184,7 @@ Data is versioned but no remote is configured. In production: one line —
 
 ---
 
-## 9. What I'd Do Differently at Production Scale
+## 8. What I'd Do Differently at Production Scale
 
 **GPU training**
 Add `resources.limits: nvidia.com/gpu: 1` to `training-job.yaml` and use a CUDA base image.
@@ -239,17 +192,18 @@ The training code selects the device automatically — no code changes needed.
 
 **Retraining trigger**
 Retraining should be triggered by data drift (PSI or KL divergence on incoming signal
-statistics), not code commits. The model should retrain when the world changes.
+statistics), not code commits. The model should retrain when the operating environment changes.
 
 **Model registry**
 W&B Artifacts provide basic lineage. A proper registry (W&B Model Registry, MLflow) adds
-promotion stages (staging → production), rollback triggers, and audit trails.
+promotion stages (staging → hardware release), rollback triggers, and audit trails.
 
-**Observability**
-Add a Prometheus `/metrics` endpoint to the serving layer. Drift in the prediction confidence
-distribution is an early signal that the operating environment has shifted.
+**Hardware-in-the-loop testing**
+Before flashing to the radar signal processor, the ONNX model should be validated against
+recorded real returns — not just synthetic data. Replay captured returns through the ONNX
+graph and compare the output distribution against known labels.
 
-**Architecture**
+**Signal model**
 A production classifier on range-Doppler maps would use a 2-D CNN operating on the full
 velocity-range plane. The pipeline infrastructure is identical — only `classifier.py` and
 `generate.py` change.
@@ -263,10 +217,9 @@ velocity-range plane. The pipeline infrastructure is identical — only `classif
 | PyTorch | Model training, FFT preprocessing layer |
 | W&B | Experiment tracking and artifact lineage |
 | DVC | Data versioning |
-| ONNX + onnxruntime | Framework-agnostic export and inference |
-| FastAPI + uvicorn | HTTP serving layer |
-| Docker | Training image and serving image |
-| Kubernetes | Job (training) + Deployment + Service (serving) |
+| ONNX + onnxruntime | Framework-agnostic export — targets edge hardware |
+| Docker | Training image |
+| Kubernetes | Job (training) |
 | GitHub Actions | CI/CD — lint, test, train, gate, export |
 | ruff | Linting |
 | pytest | Unit tests — data contracts, model interface, ONNX inference |
