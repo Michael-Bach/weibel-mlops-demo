@@ -93,17 +93,17 @@ python src/inference/predict_onnx.py
 
 ---
 
-## 4. CI/CD — GitHub Actions
+## 4. CI/CD
 
-Every push to `master` runs the full pipeline automatically:
+The workflow at `.github/workflows/ml_pipeline.yml` runs the full pipeline on every push:
 
 ```
 ruff lint → pytest → generate data → train → evaluate → export ONNX → upload artifacts
 ```
 
-CI runs training on every push as a fast validation pass — small dataset, CPU only, confirms
-the pipeline is not broken. Production training runs happen on Kubernetes (section 5), where
-multiple param sweeps run in parallel and land in MLflow for comparison.
+CI runs training as a fast validation pass — confirms the pipeline is not broken. Production
+training runs happen on Kubernetes (section 5), where multiple param sweeps run in parallel
+and land in MLflow for comparison.
 
 The quality gate is in `train.py`:
 ```python
@@ -111,12 +111,25 @@ if best_acc < baseline_accuracy:
     sys.exit(1)  # fails the CI job
 ```
 
-The `evaluate` step reads `artifacts/metrics.json` and prints the accuracy explicitly in the
-Actions log. The ONNX file is uploaded as a build artifact — ready for hardware flashing
-without re-running the pipeline.
+**Run the pipeline locally with `act`**
 
-No secrets required — MLflow writes to `./mlruns` locally. On a shared cluster, set
-`MLFLOW_TRACKING_URI` to point at the on-prem MLflow server.
+`act` executes the same workflow file in Docker without pushing to GitHub:
+
+```bash
+# Install (macOS)
+brew install act
+
+# Install (Linux)
+curl -s https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
+
+# Run the full pipeline locally
+act push
+```
+
+`.actrc` is already configured to use a lightweight (~1 GB) runner image instead of the
+default 12 GB one. The first run pulls the image; subsequent runs are fast.
+
+No secrets required — MLflow writes to `./mlruns` locally.
 
 ---
 
