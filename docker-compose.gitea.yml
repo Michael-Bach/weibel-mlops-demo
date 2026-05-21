@@ -1,0 +1,31 @@
+services:
+  gitea:
+    image: gitea/gitea:1.21
+    container_name: gitea
+    environment:
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__server__ROOT_URL=http://localhost:3000
+      - GITEA__actions__ENABLED=true
+    ports:
+      - "3000:3000"
+      - "222:22"
+    volumes:
+      - gitea-data:/data
+    restart: unless-stopped
+
+  runner:
+    image: gitea/act_runner:latest
+    container_name: gitea-runner
+    depends_on:
+      - gitea
+    environment:
+      - GITEA_INSTANCE_URL=http://gitea:3000
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-data:/data
+    restart: unless-stopped
+
+volumes:
+  gitea-data:
+  runner-data:

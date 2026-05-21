@@ -222,6 +222,45 @@ velocity-range plane. The pipeline infrastructure is identical — only `classif
 
 ---
 
+## 9. On-Prem CI — Gitea
+
+For classified data, CI must run entirely within the network. Gitea is a self-hosted Git
+server with built-in Actions that uses the same YAML syntax as GitHub Actions.
+
+**Start Gitea and the runner:**
+```bash
+docker compose -f docker-compose.gitea.yml up -d gitea
+# Wait ~10 seconds for Gitea to initialise, then open http://localhost:3000
+# Create an admin account, then enable Actions:
+#   Admin panel → Settings → Actions → Enable
+```
+
+**Get a runner registration token:**
+```
+http://localhost:3000/<your-username>/weibel-mlops-demo → Settings → Actions → Runners
+```
+
+**Start the runner with that token:**
+```bash
+GITEA_RUNNER_TOKEN=<token> docker compose -f docker-compose.gitea.yml up -d runner
+```
+
+**Push the repo to Gitea:**
+```bash
+# Create the repo in the Gitea UI first, then:
+git remote add gitea http://localhost:3000/<your-username>/weibel-mlops-demo.git
+git push gitea master
+```
+
+The workflow at `.gitea/workflows/ml_pipeline.yml` triggers automatically. It is identical
+to the GitHub Actions workflow — same steps, same quality gate, same ONNX artifact.
+
+**Air-gapped note:** by default the runner fetches `actions/checkout` and `actions/setup-python`
+from GitHub. To go fully offline, mirror those action repos into your Gitea instance and
+update the `uses:` paths to point at your local mirror.
+
+---
+
 ## Stack
 
 | Tool | Role |
@@ -232,6 +271,6 @@ velocity-range plane. The pipeline infrastructure is identical — only `classif
 | ONNX + onnxruntime | Framework-agnostic export — targets edge hardware |
 | Docker | Training image |
 | Kubernetes | Job (training) |
-| GitHub Actions | CI/CD — lint, test, train, gate, export |
+| GitHub Actions / Gitea | CI/CD — lint, test, train, gate, export (Gitea for on-prem) |
 | ruff | Linting |
 | pytest | Unit tests — data contracts, model interface, ONNX inference |
