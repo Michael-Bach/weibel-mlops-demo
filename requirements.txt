@@ -7,4 +7,4 @@ onnxruntime>=1.18.0
 dvc>=3.50.0
 pyyaml>=6.0
 pytest>=8.0.0
-ruff>=0.4.0
+ruff==0.15.13
