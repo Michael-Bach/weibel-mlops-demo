@@ -89,7 +89,7 @@ def train(params_path: str = "params.yaml") -> float:
                 step=epoch + 1,
             )
 
-            print(f"Epoch {epoch+1:02d}/{tp['epochs']} | loss: {avg_loss:.4f} | val_acc: {val_acc:.4f}")
+            print(f"Epoch {epoch+1:02d}/{tp['epochs']} | loss: {avg_loss:.4f} | acc: {val_acc:.4f}")
 
             if val_acc > best_acc:
                 best_acc = val_acc
