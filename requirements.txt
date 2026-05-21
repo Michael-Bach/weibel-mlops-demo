@@ -3,6 +3,7 @@ numpy>=1.26.0
 scikit-learn>=1.4.0
 wandb>=0.17.0
 onnx>=1.16.0
+onnxscript>=0.1.0
 onnxruntime>=1.18.0
 dvc>=3.50.0
 pyyaml>=6.0
