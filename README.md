@@ -12,12 +12,12 @@ flowchart TD
     G[1. generate.py\nSynthetic radar data] --> T[2. ruff + pytest\nLint and test]
     T --> D[3. docker build\nDockerfile.train]
     D --> K[4. kubectl apply\nK8s Job runs training\nmultiple runs / param sweeps]
-    K --> WB[5. W&B dashboard\nInspect runs\nSelect best model]
+    K --> WB[5. MLflow dashboard\nInspect runs\nSelect best model]
     WB --> X[6. export_onnx.py\nExport selected model\nto ONNX format]
 ```
 
 The pipeline has a deliberate human decision point at step 5. Multiple training runs land in
-W&B — different hyperparameters, different seeds — and the best model is selected before
+MLflow — different hyperparameters, different seeds — and the best model is selected before
 export. ONNX export is not automatic; it is a promotion decision.
 
 The final artifact is `model.onnx`. In production it targets the signal preprocessing hardware
