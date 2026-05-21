@@ -1,0 +1,20 @@
+# Training image — full dependencies including PyTorch and W&B.
+# Built separately from the serving image; used by k8s/training-job.yaml.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/       src/
+COPY scripts/   scripts/
+COPY params.yaml .
+
+ENV PYTHONPATH=/app
+
+# Generate data → train → export ONNX
+CMD ["bash", "-c", \
+    "python src/data/generate.py && \
+     python src/training/train.py && \
+     python scripts/export_onnx.py"]

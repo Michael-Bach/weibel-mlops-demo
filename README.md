@@ -76,10 +76,12 @@ weibel-mlops-demo/
 │   ├── test_model.py        # forward pass shape + logit semantics
 │   └── test_onnx.py         # ONNX load, batch/single inference, value ranges
 ├── k8s/
+│   ├── training-job.yaml    # K8s Job: generate → train → export ONNX
 │   ├── deployment.yaml      # 2-replica Deployment with health probes
 │   └── service.yaml         # ClusterIP Service routing port 80 → 8080
 ├── artifacts/               # model checkpoints, ONNX file, metrics.json
-├── Dockerfile               # inference serving image (~250 MB)
+├── Dockerfile               # serving image (~250 MB, no PyTorch)
+├── Dockerfile.train         # training image (~4 GB, full deps)
 ├── params.yaml              # single source of truth for all hyperparameters
 ├── pyproject.toml           # ruff + pytest config
 └── requirements.txt
@@ -113,8 +115,15 @@ All hyperparameters are in `params.yaml`. To ablate the FFT step, set `use_fft: 
 
 ## Docker — Inference Serving
 
-The Docker image contains only the inference and serving code — no PyTorch, no W&B, no DVC.
-Training happens in CI; the image is the deployment artifact.
+Two images are built from this repo — one for training, one for serving:
+
+| Image | Dockerfile | Contents | Size |
+|---|---|---|---|
+| `weibel-radar-train` | `Dockerfile.train` | PyTorch, W&B, DVC, full pipeline | ~4 GB |
+| `weibel-radar` | `Dockerfile` | onnxruntime, FastAPI, uvicorn only | ~250 MB |
+
+The serving image has no PyTorch dependency. Training produces `model.onnx`; the serving
+image packages and exposes it.
 
 ```bash
 docker build -t weibel-radar:latest .
@@ -140,36 +149,49 @@ curl -X POST http://localhost:8080/predict \
 
 ## Kubernetes
 
-The `k8s/` manifests deploy the inference server to any Kubernetes cluster.
-
-```bash
-# Push image to a registry first
-docker tag weibel-radar:latest YOUR_REGISTRY/weibel-radar:latest
-docker push YOUR_REGISTRY/weibel-radar:latest
-
-# Update image in k8s/deployment.yaml, then apply
-kubectl apply -f k8s/
-kubectl rollout status deployment/radar-inference
-```
+The `k8s/` manifests cover the full pipeline — training and serving — on a single cluster.
 
 **What the manifests do:**
 
-| Resource | Purpose |
-|---|---|
-| `Deployment` | Runs 2 replicas of the inference container with CPU/memory limits |
-| `Service` | Load-balances across replicas; routes port 80 → container port 8080 |
+| Manifest | Kind | Purpose |
+|---|---|---|
+| `training-job.yaml` | Job | Runs generate → train → export as a one-shot container |
+| `deployment.yaml` | Deployment | Runs 2 replicas of the inference server |
+| `service.yaml` | Service | Load-balances across replicas; routes port 80 → 8080 |
 
-The Deployment configures `readinessProbe` and `livenessProbe` on `GET /health`. Kubernetes
-will not route traffic to a pod until it passes the readiness check, and will restart any pod
-that fails the liveness check. A bad model image — one where the ONNX file fails to load —
-never receives production traffic.
-
-**Model update rollout:**
+**Run training as a Kubernetes Job:**
 ```bash
-# After CI produces a new model artifact and builds a new image:
+# Store W&B credentials as a K8s secret (once)
+kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
+
+# Push training image and run the job
+docker build -f Dockerfile.train -t YOUR_REGISTRY/weibel-radar-train:latest .
+docker push YOUR_REGISTRY/weibel-radar-train:latest
+kubectl apply -f k8s/training-job.yaml
+kubectl wait --for=condition=complete job/radar-training
+```
+
+The training Job writes `model.onnx` to a shared PersistentVolume (`model-store-pvc`).
+The serving Deployment mounts the same PVC, so the inference pods pick up the new model
+on restart without rebuilding the image.
+
+**Deploy the inference server:**
+```bash
+docker build -t YOUR_REGISTRY/weibel-radar:latest .
+docker push YOUR_REGISTRY/weibel-radar:latest
+kubectl apply -f k8s/deployment.yaml -f k8s/service.yaml
+kubectl rollout status deployment/radar-inference
+```
+
+The Deployment configures `readinessProbe` and `livenessProbe` on `GET /health`. A pod
+that fails to load the ONNX model never passes the readiness check — bad model versions
+never receive production traffic.
+
+**Zero-downtime model update:**
+```bash
 kubectl set image deployment/radar-inference radar-inference=YOUR_REGISTRY/weibel-radar:v2
 kubectl rollout status deployment/radar-inference
-# Old pods stay live until new pods pass health checks — zero downtime
+# Old pods stay live until new pods pass health checks
 ```
 
 ---
@@ -251,11 +273,11 @@ Set `WANDB_API_KEY` as a GitHub Actions secret (Settings → Secrets → Actions
 
 ## What I'd Do Differently at Production Scale
 
-**Training on Kubernetes, not CI**
-The current pipeline trains in GitHub Actions because the job is fast (synthetic data, 30 epochs,
-CPU). In production, training would run as a Kubernetes Job on a GPU node, triggered by data
-drift or a scheduled pipeline — not a code push. CI would orchestrate: validate data, submit
-the Job, wait for metrics, then build and deploy the inference image.
+**GPU training**
+The training Job currently runs on CPU. Switching to a GPU node requires adding a
+`resources.limits` entry (`nvidia.com/gpu: 1`) to `training-job.yaml` and using a
+CUDA-enabled base image in `Dockerfile.train`. The training code requires no changes —
+PyTorch selects the device automatically.
 
 **Data versioning**
 Replace the DVC local cache with a remote (S3/GCS). Add a data validation step so a malformed

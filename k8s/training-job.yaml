@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: radar-training
+spec:
+  backoffLimit: 2        # retry up to 2 times on failure
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: trainer
+          image: YOUR_REGISTRY/weibel-radar-train:latest
+          env:
+            - name: WANDB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wandb-secret   # kubectl create secret generic wandb-secret --from-literal=api-key=<your-key>
+                  key: api-key
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: model-store
+              mountPath: /app/artifacts
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store-pvc  # shared PVC between training job and serving deployment
