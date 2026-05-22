@@ -86,7 +86,7 @@ python scripts/export_onnx.py
 
 **Step 5 — Run ONNX inference**
 ```bash
-python src/inference/predict_onnx.py
+python src/inference/validate_onnx.py
 # Loads model.onnx via onnxruntime — no PyTorch needed
 # Prints label + confidence for a sample batch
 ```

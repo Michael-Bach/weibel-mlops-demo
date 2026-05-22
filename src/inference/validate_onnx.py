@@ -1,7 +1,7 @@
-# src/inference/predict_onnx.py
+# src/inference/validate_onnx.py
 """
-ONNX runtime inference — runs RadarClassifier without a PyTorch dependency.
-Suitable for edge deployment or any environment where PyTorch is too heavy.
+Validates the exported ONNX model by running a sample batch through onnxruntime.
+No PyTorch dependency — confirms the graph is intact before hardware handoff.
 """
 
 from pathlib import Path

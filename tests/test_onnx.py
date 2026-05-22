@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.inference.predict_onnx import OnnxPredictor
+from src.inference.validate_onnx import OnnxPredictor
 from src.models.classifier import RadarClassifier
 
 INPUT_DIM = 64
