@@ -25,6 +25,8 @@ class RadarClassifier(nn.Module):
 
         # rfft of a length-N signal produces N//2+1 unique frequency bins
         feature_dim = input_dim // 2 + 1 if use_fft else input_dim
+        if use_fft:
+            self.register_buffer("hanning_window", torch.hann_window(input_dim))
 
         layers = []
         prev_dim = feature_dim
@@ -42,8 +44,10 @@ class RadarClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_fft:
-            # Real FFT: [B, N] → magnitude spectrum [B, N//2+1]
-            x = torch.fft.rfft(x, dim=1).abs()
+            x = x * self.hanning_window
+            spec = torch.fft.rfft(x, dim=1)
+            # magnitude via real ops — avoids ReduceL2 opset-18 compat issue
+            x = torch.sqrt(spec.real.pow(2) + spec.imag.pow(2))
         return self.net(x)
 
 

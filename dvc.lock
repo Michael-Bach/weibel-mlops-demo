@@ -1,0 +1,131 @@
+schema: '2.0'
+stages:
+  generate:
+    cmd: PYTHONPATH=. python src/data/generate.py
+    deps:
+    - path: params.yaml
+      hash: md5
+      md5: 6842b019ed85c5bf2f44ac82bee5a53a
+      size: 579
+    - path: src/data/generate.py
+      hash: md5
+      md5: 60d33efff31ce1112d0515c10c5bdd4b
+      size: 4178
+    params:
+      params.yaml:
+        data:
+          n_samples: 5000
+          signal_length: 128
+          snr_range:
+          - 5.0
+          - 20.0
+          clutter_ratio: 0.5
+          noise_seed: 42
+          val_split: 0.2
+    outs:
+    - path: data/processed/X_train.npy
+      hash: md5
+      md5: d9e564c158ebfb372347c7d8493d6e35
+      size: 2048128
+    - path: data/processed/X_val.npy
+      hash: md5
+      md5: 3cef94b615bf7ee8dfe94b7c48ff965d
+      size: 512128
+    - path: data/processed/y_train.npy
+      hash: md5
+      md5: 3d52bb95947d0864d8eedd03ee5cb976
+      size: 32128
+    - path: data/processed/y_val.npy
+      hash: md5
+      md5: c87c92309d87e0a5e87b7a884ede2289
+      size: 8128
+    - path: data/raw/X.npy
+      hash: md5
+      md5: ca8aa2d7e52835f82111be785722f9f0
+      size: 2560128
+    - path: data/raw/y.npy
+      hash: md5
+      md5: bdf01d8c40a5d8ec330e5f4820cf9967
+      size: 40128
+  train:
+    cmd: PYTHONPATH=. python src/training/train.py
+    deps:
+    - path: data/processed/X_train.npy
+      hash: md5
+      md5: d9e564c158ebfb372347c7d8493d6e35
+      size: 2048128
+    - path: data/processed/X_val.npy
+      hash: md5
+      md5: 3cef94b615bf7ee8dfe94b7c48ff965d
+      size: 512128
+    - path: data/processed/y_train.npy
+      hash: md5
+      md5: 3d52bb95947d0864d8eedd03ee5cb976
+      size: 32128
+    - path: data/processed/y_val.npy
+      hash: md5
+      md5: c87c92309d87e0a5e87b7a884ede2289
+      size: 8128
+    - path: params.yaml
+      hash: md5
+      md5: 6842b019ed85c5bf2f44ac82bee5a53a
+      size: 579
+    - path: src/models/classifier.py
+      hash: md5
+      md5: 39b87f073a4a40f350262a0b8c13a5f3
+      size: 2182
+    - path: src/training/train.py
+      hash: md5
+      md5: 795bd10decabf0ead28719ff512ea659
+      size: 3719
+    params:
+      params.yaml:
+        model:
+          hidden_dims:
+          - 128
+          - 64
+          dropout: 0.1
+          use_fft: true
+        training:
+          epochs: 30
+          batch_size: 64
+          learning_rate: 0.001
+          baseline_accuracy: 0.8
+    outs:
+    - path: artifacts/metrics.json
+      hash: md5
+      md5: 3424079823ad144e33a1f43b83748930
+      size: 25
+    - path: artifacts/model_best.pt
+      hash: md5
+      md5: 618b0ab8a7ea73f5a753bdcbf3c34f5c
+      size: 76981
+  export:
+    cmd: PYTHONPATH=. python scripts/export_onnx.py
+    deps:
+    - path: artifacts/model_best.pt
+      hash: md5
+      md5: 618b0ab8a7ea73f5a753bdcbf3c34f5c
+      size: 76981
+    - path: params.yaml
+      hash: md5
+      md5: 6842b019ed85c5bf2f44ac82bee5a53a
+      size: 579
+    - path: scripts/export_onnx.py
+      hash: md5
+      md5: 543842cd110778af6fd93188ee1084ba
+      size: 2438
+    - path: src/models/classifier.py
+      hash: md5
+      md5: 39b87f073a4a40f350262a0b8c13a5f3
+      size: 2182
+    params:
+      params.yaml:
+        onnx:
+          opset_version: 17
+          model_path: artifacts/model.onnx
+    outs:
+    - path: artifacts/model.onnx
+      hash: md5
+      md5: 238c99b3b5733be565a0e65deeb1d953
+      size: 2815

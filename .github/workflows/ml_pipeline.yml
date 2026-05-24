@@ -18,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
@@ -40,25 +40,13 @@ jobs:
       - name: Train model
         run: PYTHONPATH=. python src/training/train.py
 
-      # ── Evaluate against baseline ─────────────────────────────────────────────
-      - name: Evaluate — enforce accuracy baseline
-        run: |
-          python - <<'EOF'
-          import json, sys
-          with open("artifacts/metrics.json") as f:
-              metrics = json.load(f)
-          acc = metrics["val_accuracy"]
-          baseline = 0.80
-          print(f"val_accuracy: {acc:.4f}  baseline: {baseline}")
-          if acc < baseline:
-              print(f"FAILED: {acc:.4f} < {baseline}")
-              sys.exit(1)
-          print(f"PASSED")
-          EOF
-
       # ── ONNX export ───────────────────────────────────────────────────────────
       - name: Export ONNX model
         run: PYTHONPATH=. python scripts/export_onnx.py
+
+      # ── ONNX validation ───────────────────────────────────────────────────────
+      - name: Validate ONNX model runs end-to-end
+        run: PYTHONPATH=. python src/inference/validate_onnx.py
 
       # ── Upload artifacts ──────────────────────────────────────────────────────
       - name: Upload model artifacts

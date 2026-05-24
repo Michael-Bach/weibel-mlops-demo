@@ -1,0 +1,46 @@
+stages:
+  generate:
+    cmd: PYTHONPATH=. python src/data/generate.py
+    deps:
+      - src/data/generate.py
+      - params.yaml
+    params:
+      - data
+    outs:
+      - data/raw/X.npy
+      - data/raw/y.npy
+      - data/processed/X_train.npy
+      - data/processed/X_val.npy
+      - data/processed/y_train.npy
+      - data/processed/y_val.npy
+
+  train:
+    cmd: PYTHONPATH=. python src/training/train.py
+    deps:
+      - src/training/train.py
+      - src/models/classifier.py
+      - data/processed/X_train.npy
+      - data/processed/X_val.npy
+      - data/processed/y_train.npy
+      - data/processed/y_val.npy
+      - params.yaml
+    params:
+      - model
+      - training
+    outs:
+      - artifacts/model_best.pt
+    metrics:
+      - artifacts/metrics.json:
+          cache: false
+
+  export:
+    cmd: PYTHONPATH=. python scripts/export_onnx.py
+    deps:
+      - scripts/export_onnx.py
+      - src/models/classifier.py
+      - artifacts/model_best.pt
+      - params.yaml
+    params:
+      - onnx
+    outs:
+      - artifacts/model.onnx

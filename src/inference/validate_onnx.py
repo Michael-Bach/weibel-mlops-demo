@@ -50,6 +50,8 @@ def predict_single(
 
 
 if __name__ == "__main__":
+    import time
+
     import yaml
 
     with open("params.yaml") as f:
@@ -58,9 +60,26 @@ if __name__ == "__main__":
 
     predictor = OnnxPredictor()
     rng = np.random.default_rng(0)
+
+    # Sample batch inference
     batch = rng.standard_normal((4, signal_length)).astype(np.float32)
     labels, confidences = predictor.predict(batch)
-
     for i, (label, conf) in enumerate(zip(labels, confidences)):
         class_name = "target" if label == 1 else "clutter"
         print(f"Sample {i}: {class_name} ({conf:.3f})")
+
+    # Latency benchmark — 50 warmup runs discarded, then 1000 timed runs
+    print("\nBenchmarking latency (50 warmup + 1000 timed runs, batch_size=1)...")
+    sample = rng.standard_normal((1, signal_length)).astype(np.float32)
+    for _ in range(50):
+        predictor.predict(sample)
+    N = 1000
+    times = np.empty(N)
+    for i in range(N):
+        t0 = time.perf_counter()
+        predictor.predict(sample)
+        times[i] = time.perf_counter() - t0
+    times_ms = times * 1000
+    print(f"Latency  mean : {times_ms.mean():.3f} ms")
+    print(f"Latency  p50  : {np.percentile(times_ms, 50):.3f} ms")
+    print(f"Latency  p99  : {np.percentile(times_ms, 99):.3f} ms")

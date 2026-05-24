@@ -32,15 +32,23 @@ def generate_target(signal_length: int, snr_db: float, rng: np.random.Generator)
 
 
 def generate_clutter(signal_length: int, snr_db: float, rng: np.random.Generator) -> np.ndarray:
-    """Bandlimited noise clutter — low-frequency dominated."""
-    noise = rng.normal(0, 1, signal_length)
-    # Low-pass filter via cumulative sum (cheap approximation of 1/f structure)
-    clutter = np.cumsum(noise)
+    """Low-frequency dominated clutter at specified SNR above the AWGN noise floor.
+
+    The clutter waveform is generated from a low-pass filtered noise process (cumulative
+    sum as a cheap 1/f approximation), scaled to the requested SNR, then AWGN is added
+    on top — identical treatment to the target model. This makes the SNR parameter
+    physically meaningful: at low SNR both classes are noise-dominated and harder to
+    separate; at high SNR the spectral structure (diffuse low-frequency vs sharp peak)
+    is clearly visible.
+    """
+    raw = rng.normal(0, 1, signal_length)
+    clutter = np.cumsum(raw)
     clutter -= clutter.mean()
-    # Scale to same power regime as targets for a fair classification challenge
-    amplitude = 10 ** (snr_db / 20) * 0.4
-    clutter = amplitude * clutter / (clutter.std() + 1e-8)
-    return clutter.astype(np.float32)
+    clutter /= clutter.std() + 1e-8          # unit-std low-frequency waveform
+    amplitude = 10 ** (snr_db / 20)          # same SNR convention as generate_target
+    clutter = amplitude * clutter
+    noise = rng.normal(0, 1, signal_length)  # receiver AWGN — same noise floor as target
+    return (clutter + noise).astype(np.float32)
 
 
 def generate_dataset(params: dict) -> tuple[np.ndarray, np.ndarray]:

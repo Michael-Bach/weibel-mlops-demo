@@ -70,6 +70,7 @@ def train(params_path: str = "params.yaml") -> float:
         artifacts.mkdir(exist_ok=True)
 
         best_acc = 0.0
+        best_epoch = 0
         for epoch in range(tp["epochs"]):
             model.train()
             total_loss = 0.0
@@ -93,9 +94,11 @@ def train(params_path: str = "params.yaml") -> float:
 
             if val_acc > best_acc:
                 best_acc = val_acc
+                best_epoch = epoch + 1
                 torch.save(model.state_dict(), artifacts / "model_best.pt")
 
         mlflow.log_metric("best_val_accuracy", best_acc)
+        mlflow.log_metric("best_epoch", best_epoch)
         mlflow.log_artifact(str(artifacts / "model_best.pt"))
 
     metrics = {"val_accuracy": best_acc}
