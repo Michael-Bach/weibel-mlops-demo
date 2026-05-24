@@ -1,0 +1,27 @@
+---
+# Namespace isolation — workloads are separated by function.
+# Training jobs have no network access to the serving namespace;
+# monitoring scrapes both but cannot modify them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-training
+  labels:
+    purpose: model-training
+    managed-by: kubectl
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-serving
+  labels:
+    purpose: model-serving
+    managed-by: kubectl
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    purpose: observability
+    managed-by: kubectl

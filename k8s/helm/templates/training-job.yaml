@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: radar-training
+  namespace: {{ .Values.training.namespace }}
+  labels:
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+    app.kubernetes.io/name: radar-classifier
+    app.kubernetes.io/managed-by: Helm
+spec:
+  backoffLimit: {{ .Values.training.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.training.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: radar-classifier
+        role: training
+    spec:
+      serviceAccountName: trainer
+      restartPolicy: Never
+      {{- if .Values.training.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.training.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.training.gpu.enabled }}
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      {{- end }}
+      containers:
+        - name: trainer
+          image: {{ .Values.image.registry }}/weibel-radar-train:{{ .Values.image.trainTag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: {{ .Values.mlflow.trackingUri }}
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              {{- toYaml .Values.training.resources.requests | nindent 14 }}
+              {{- if .Values.training.gpu.enabled }}
+              nvidia.com/gpu: {{ .Values.training.gpu.count | quote }}
+              {{- end }}
+            limits:
+              {{- toYaml .Values.training.resources.limits | nindent 14 }}
+              {{- if .Values.training.gpu.enabled }}
+              nvidia.com/gpu: {{ .Values.training.gpu.count | quote }}
+              {{- end }}
+          livenessProbe:
+            exec:
+              command: ["test", "-f", "/app/artifacts/.training_started"]
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            failureThreshold: 5
+          volumeMounts:
+            - name: model-store
+              mountPath: /app/artifacts
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store-pvc

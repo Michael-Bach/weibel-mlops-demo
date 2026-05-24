@@ -1,0 +1,48 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: mlops-demo
+    project: weibel-radar
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []   # configure alertmanager endpoint for production paging
+
+scrape_configs:
+  # ── Prometheus self-monitoring ─────────────────────────────────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ── MLflow — custom metrics pushed from training scripts ──────────────────
+  # Training Jobs push epoch metrics via a Pushgateway (batch job pattern).
+  # Enables training progress visibility without a long-lived server process.
+  - job_name: "training-pushgateway"
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
+  # ── ONNX serving — scrape /metrics from serving pods ─────────────────────
+  # Pods annotate themselves with prometheus.io/scrape=true (see serving-deployment.yaml).
+  # In a full Kubernetes setup, use kubernetes_sd_configs instead.
+  - job_name: "radar-onnx-serving"
+    static_configs:
+      - targets: ["radar-onnx-serving:8080"]
+    metrics_path: /metrics
+
+  # ── GPU utilization — NVIDIA DCGM Exporter ───────────────────────────────
+  # Deploy dcgm-exporter as a DaemonSet on GPU nodes.
+  # Exposes per-GPU utilization, memory, and temperature metrics.
+  - job_name: "dcgm-exporter"
+    static_configs:
+      - targets: ["dcgm-exporter:9400"]
+
+  # ── Kubernetes node metrics ───────────────────────────────────────────────
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]

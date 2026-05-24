@@ -1,0 +1,147 @@
+groups:
+
+  # ── Pipeline health ─────────────────────────────────────────────────────────
+  - name: mlops-pipeline
+    interval: 60s
+    rules:
+      - alert: TrainingJobFailed
+        expr: kube_job_status_failed{namespace="ml-training"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: mlops
+        annotations:
+          summary: "Training Job failed"
+          description: >
+            Kubernetes Job {{ $labels.job_name }} in ml-training has failed.
+            Check pod logs: kubectl logs -n ml-training -l role=training --tail=100
+
+      - alert: TrainingJobStalled
+        expr: absent(kube_job_status_active{namespace="ml-training"})
+        for: 25h
+        labels:
+          severity: warning
+          team: mlops
+        annotations:
+          summary: "No training jobs active for >25 h"
+          description: >
+            No active training jobs in ml-training. Verify the retraining
+            schedule has not been silently skipped.
+
+      - alert: PipelineAccuracyGateFailed
+        expr: radar_training_val_accuracy < 0.80
+        for: 0m
+        labels:
+          severity: critical
+          team: mlops
+        annotations:
+          summary: "Training accuracy gate failed (< 0.80)"
+          description: >
+            val_accuracy={{ $value }} is below the 0.80 CI gate.
+            The pipeline will have exited with code 1. Investigate
+            data quality or model convergence.
+
+  # ── Model serving health ────────────────────────────────────────────────────
+  - name: model-serving
+    interval: 30s
+    rules:
+      - alert: InferenceLatencyHigh
+        expr: histogram_quantile(0.99, rate(inference_duration_seconds_bucket[5m])) > 0.005
+        for: 2m
+        labels:
+          severity: warning
+          team: mlops
+        annotations:
+          summary: "p99 inference latency > 5 ms"
+          description: >
+            Radar classifier p99 latency is {{ $value | humanizeDuration }}.
+            Edge timing budget may be exceeded. Check hardware load.
+
+      - alert: InferenceErrorRateHigh
+        expr: rate(inference_errors_total[5m]) > 0.01
+        for: 1m
+        labels:
+          severity: critical
+          team: mlops
+        annotations:
+          summary: "Inference error rate > 1 %"
+          description: >
+            Classifier returning errors at {{ $value | humanizePercentage }} rate.
+            Possible causes: model file corruption, OOM, hardware fault.
+
+      - alert: ServingPodsDown
+        expr: kube_deployment_status_replicas_available{namespace="ml-serving", deployment="radar-onnx-serving"} < 1
+        for: 1m
+        labels:
+          severity: critical
+          team: mlops
+        annotations:
+          summary: "No serving pods available"
+          description: "All radar-onnx-serving pods are down in ml-serving namespace."
+
+  # ── GPU resources ────────────────────────────────────────────────────────────
+  - name: gpu-resources
+    interval: 30s
+    rules:
+      - alert: GPUSaturation
+        expr: DCGM_FI_DEV_GPU_UTIL > 95
+        for: 15m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "GPU utilization > 95 % for 15 min"
+          description: >
+            GPU node {{ $labels.instance }} is saturated. Training queue may
+            stall or new Jobs will pending-schedule indefinitely.
+
+      - alert: GPUMemoryPressure
+        expr: (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_TOTAL) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "GPU memory > 90 %"
+          description: >
+            GPU memory pressure on {{ $labels.instance }}. Risk of OOM
+            termination if another Job is scheduled.
+
+      - alert: GPUNodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "GPU node not ready"
+          description: "Node {{ $labels.node }} is NotReady. Training Jobs cannot schedule."
+
+  # ── Data drift ───────────────────────────────────────────────────────────────
+  - name: data-drift
+    interval: 300s
+    rules:
+      - alert: FeatureDriftWarn
+        expr: radar_psi_score >= 0.10 and radar_psi_score < 0.20
+        for: 0m
+        labels:
+          severity: warning
+          team: mlops
+        annotations:
+          summary: "Feature drift PSI 0.10–0.20 (moderate)"
+          description: >
+            PSI={{ $value }}. Moderate distribution shift detected.
+            Review recent radar operating conditions. Run scripts/drift_detect.py.
+
+      - alert: FeatureDriftAlert
+        expr: radar_psi_score >= 0.20
+        for: 0m
+        labels:
+          severity: critical
+          team: mlops
+        annotations:
+          summary: "Feature drift PSI > 0.20 — retraining required"
+          description: >
+            PSI={{ $value }} exceeds the 0.20 alert threshold.
+            Initiate retraining review: collect labelled samples from the new
+            distribution, retrain, validate, and promote via register_model.py.

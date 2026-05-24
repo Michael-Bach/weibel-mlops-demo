@@ -2,28 +2,106 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: radar-training
+  namespace: ml-training
+  labels:
+    app: radar-classifier
+    pipeline-stage: training
 spec:
-  backoffLimit: 2        # retry up to 2 times on failure
+  backoffLimit: 2                    # retry up to 2 times before marking failed
+  ttlSecondsAfterFinished: 86400     # clean up completed Jobs after 24 h
+
   template:
+    metadata:
+      labels:
+        app: radar-classifier
+        role: training
     spec:
+      serviceAccountName: trainer   # least-privilege SA defined in rbac.yaml
       restartPolicy: Never
-      containers:
-        - name: trainer
+
+      # ── Node scheduling ─────────────────────────────────────────────────────
+      # Route to GPU nodes labelled node-type=gpu-training. The taint
+      # nvidia.com/gpu=:NoSchedule prevents non-GPU workloads from landing
+      # on these nodes and consuming reserved capacity.
+      nodeSelector:
+        node-type: gpu-training
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      # ── Init: pull versioned dataset from DVC remote ─────────────────────
+      initContainers:
+        - name: dvc-pull
           image: YOUR_REGISTRY/weibel-radar-train:latest
+          command: ["dvc", "pull", "data/processed"]
           env:
-            - name: MLFLOW_TRACKING_URI
-              value: "http://mlflow-server:5000"  # point at your on-prem MLflow server
-          resources:
-            requests:
-              cpu: "1"
-              memory: "2Gi"
-            limits:
-              cpu: "2"
-              memory: "4Gi"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: dvc-remote-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dvc-remote-credentials
+                  key: secret-access-key
           volumeMounts:
             - name: model-store
               mountPath: /app/artifacts
+
+      # ── Main training container ──────────────────────────────────────────
+      containers:
+        - name: trainer
+          image: YOUR_REGISTRY/weibel-radar-train:latest
+          command:
+            - bash
+            - -c
+            - |
+              touch /app/artifacts/.training_started && \
+              python src/training/train.py && \
+              python scripts/export_onnx.py && \
+              python src/inference/validate_onnx.py
+          env:
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: tracking-uri
+            - name: PYTHONPATH
+              value: /app
+
+          # ── Resources ────────────────────────────────────────────────────
+          # Requesting exactly 1 GPU prevents the scheduler from packing two
+          # training Jobs onto the same GPU node. GPU limits == requests by
+          # convention (nvidia device plugin does not support fractional GPUs).
+          resources:
+            requests:
+              cpu: "4"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+
+          # ── Probes ───────────────────────────────────────────────────────
+          # Liveness: the training process touches .training_started at startup.
+          # If the file is absent after 60 s the Job is considered dead.
+          livenessProbe:
+            exec:
+              command: ["test", "-f", "/app/artifacts/.training_started"]
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            failureThreshold: 5
+
+          volumeMounts:
+            - name: model-store
+              mountPath: /app/artifacts
+
+      # ── Volumes ──────────────────────────────────────────────────────────
       volumes:
         - name: model-store
           persistentVolumeClaim:
-            claimName: model-store-pvc  # shared PVC between training job and serving deployment
+            claimName: model-store-pvc   # shared NFS PVC defined in pvc.yaml

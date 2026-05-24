@@ -1,0 +1,59 @@
+# Default values — override with -f env/production.yaml or --set key=value.
+# All values are documented; nothing is a magic default.
+
+image:
+  registry: YOUR_REGISTRY
+  trainTag: latest
+  serveTag: latest
+  pullPolicy: IfNotPresent
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  namespace: ml-training
+  gpu:
+    enabled: true
+    count: 1              # exact GPU count — no fractional GPU support in nvidia plugin
+  resources:
+    requests:
+      cpu: "4"
+      memory: "8Gi"
+    limits:
+      cpu: "8"
+      memory: "16Gi"
+  nodeSelector:
+    node-type: gpu-training
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+
+# ── Serving ───────────────────────────────────────────────────────────────────
+serving:
+  namespace: ml-serving
+  replicas: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+
+# ── MLflow ────────────────────────────────────────────────────────────────────
+mlflow:
+  trackingUri: http://mlflow-server:5000
+  # artifactRoot: s3://your-bucket/mlflow   # override for remote artifact storage
+
+# ── Persistent storage ────────────────────────────────────────────────────────
+storage:
+  modelStoreSizeGi: 50
+  nfsServer: nfs-server.internal
+  nfsPath: /exports/model-store
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+monitoring:
+  namespace: monitoring
+  prometheus:
+    enabled: true
+    retentionDays: 30
+  grafana:
+    enabled: true
+    adminPassword: ""    # inject via --set or Vault; never commit a real password

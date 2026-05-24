@@ -1,0 +1,67 @@
+# Local observability stack — Prometheus + Grafana + MLflow.
+# For production, deploy via Helm into the monitoring namespace.
+#
+# Start all services:
+#   docker compose -f infra/docker-compose.monitoring.yml up -d
+#
+# URLs:
+#   MLflow UI:        http://localhost:5000
+#   Prometheus:       http://localhost:9090
+#   Grafana:          http://localhost:3001  (admin / admin — change on first login)
+#
+# Stop:
+#   docker compose -f infra/docker-compose.monitoring.yml down
+
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+    volumes:
+      - mlflow-data:/mlflow
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle          # allows config reload via POST /-/reload
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:

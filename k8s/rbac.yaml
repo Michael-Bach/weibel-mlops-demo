@@ -1,0 +1,73 @@
+---
+# ServiceAccount for training Jobs.
+# All pods in ml-training run under this account — not the default SA.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trainer
+  namespace: ml-training
+---
+# Role: training Jobs may read Secrets (MLflow URI, registry credentials)
+# and inspect their own Job status. They cannot create, delete, or modify
+# any other resource. Least-privilege by design.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: training-role
+  namespace: ml-training
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: training-rolebinding
+  namespace: ml-training
+subjects:
+  - kind: ServiceAccount
+    name: trainer
+    namespace: ml-training
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: training-role
+---
+# ServiceAccount for the ONNX serving deployment.
+# Read-only access to model-store PVC; no cluster-wide permissions.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: model-server
+  namespace: ml-serving
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: serving-role
+  namespace: ml-serving
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: serving-rolebinding
+  namespace: ml-serving
+subjects:
+  - kind: ServiceAccount
+    name: model-server
+    namespace: ml-serving
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: serving-role

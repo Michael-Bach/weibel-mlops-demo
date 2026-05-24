@@ -9,6 +9,10 @@ Signal model:
 All parameters driven from params.yaml for full reproducibility.
 """
 
+import hashlib
+import json
+import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -89,6 +93,22 @@ def train_val_split(
     return X[train_idx], X[val_idx], y[train_idx], y[val_idx]
 
 
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def _data_hash(X: np.ndarray, y: np.ndarray) -> str:
+    h = hashlib.md5()
+    h.update(X.tobytes())
+    h.update(y.tobytes())
+    return h.hexdigest()
+
+
 if __name__ == "__main__":
     params = load_params()
     rng = np.random.default_rng(params["noise_seed"])
@@ -110,6 +130,29 @@ if __name__ == "__main__":
     np.save(raw / "X.npy", X)
     np.save(raw / "y.npy", y)
 
+    # Lineage record — written alongside the data so every dataset version
+    # carries a complete description of how it was produced.
+    metadata = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "git_sha": _git_sha(),
+        "params": params,
+        "outputs": {
+            "n_samples": len(X),
+            "n_train": len(X_train),
+            "n_val": len(X_val),
+            "signal_length": X.shape[1],
+            "class_distribution": {
+                "target": int(y.sum()),
+                "clutter": int((y == 0).sum()),
+            },
+        },
+        "data_hash_md5": _data_hash(X, y),
+    }
+    meta_path = out / "generation_metadata.json"
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
     print(f"Dataset: {len(X)} samples, {X.shape[1]}-point signals")
     print(f"Train: {len(X_train)} | Val: {len(X_val)}")
     print(f"Target: {y.sum()} | Clutter: {(y == 0).sum()}")
+    print(f"Lineage: {meta_path}  hash={metadata['data_hash_md5'][:12]}…")

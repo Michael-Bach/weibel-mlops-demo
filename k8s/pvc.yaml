@@ -1,0 +1,50 @@
+---
+# NFS-backed PersistentVolume shared between ml-training and ml-serving.
+# Training Jobs write model.onnx here; the serving Deployment mounts it read-only.
+# ReadWriteMany access mode requires an NFS or equivalent CSI driver.
+#
+# In a cloud environment replace the nfs stanza with a CSI driver (EFS, Azure File, etc.).
+# On-prem: point at your organisation's NFS server.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: model-store
+  labels:
+    purpose: model-artifacts
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain     # manual cleanup prevents accidental deletion
+  nfs:
+    server: nfs-server.internal             # replace with your NFS server hostname or IP
+    path: /exports/model-store
+---
+# PVC for the training namespace — read/write
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-store-pvc
+  namespace: ml-training
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: model-store
+---
+# PVC for the serving namespace — same PV, read-only mount in the Deployment spec
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-store-pvc
+  namespace: ml-serving
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: model-store

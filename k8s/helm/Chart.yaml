@@ -1,0 +1,17 @@
+apiVersion: v2
+name: weibel-radar-mlops
+description: >
+  Helm chart for the Weibel radar signal classifier MLOps stack.
+  Deploys training infrastructure, ONNX serving, and observability
+  into isolated Kubernetes namespaces.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - mlops
+  - radar
+  - defense
+  - onnx
+  - machine-learning
+maintainers:
+  - name: Michael Bach

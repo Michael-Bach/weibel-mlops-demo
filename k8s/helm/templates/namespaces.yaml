@@ -1,0 +1,10 @@
+{{- range list .Values.training.namespace .Values.serving.namespace .Values.monitoring.namespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ . }}
+  labels:
+    managed-by: helm
+    chart: {{ $.Chart.Name }}-{{ $.Chart.Version }}
+{{- end }}
