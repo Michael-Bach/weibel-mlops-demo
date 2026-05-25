@@ -8,9 +8,10 @@ dist/
 data/raw/
 data/processed/
 
-# Artifacts
-artifacts/
-*.onnx
+# Artifacts — ignore everything except the deployed ONNX model for Streamlit
+artifacts/*
+!artifacts/model.onnx
+!artifacts/model.onnx.data
 
 # Experiment tracking
 mlruns/
