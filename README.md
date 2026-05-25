@@ -8,6 +8,20 @@
 
 ---
 
+## Just want to see it work?
+
+No setup needed. Click the badge above or go to **[weibel-mlops-demo.streamlit.app](https://weibel-mlops-demo.streamlit.app)** to open the live demo in your browser.
+
+The demo lets you:
+- Generate a radar target or clutter signal at any noise level and watch the model classify it in real time
+- Compare how target and clutter signals look in the time and frequency domain
+- See how classification accuracy degrades as noise increases
+- Walk through the full pipeline — from data generation to edge deployment — in plain language
+
+The rest of this README is for engineers who want to understand or run the pipeline themselves.
+
+---
+
 ## What This Project Demonstrates
 
 - **CI/CD for ML pipelines** — GitHub Actions and self-hosted Gitea (on-prem, air-gapped)
