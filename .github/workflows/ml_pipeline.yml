@@ -38,10 +38,14 @@ jobs:
 
       # ── Training ─────────────────────────────────────────────────────────────
       - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: ./mlruns
         run: PYTHONPATH=. python src/training/train.py
 
       # ── ONNX export ───────────────────────────────────────────────────────────
       - name: Export ONNX model
+        env:
+          MLFLOW_TRACKING_URI: ./mlruns
         run: PYTHONPATH=. python scripts/export_onnx.py
 
       # ── ONNX validation ───────────────────────────────────────────────────────
