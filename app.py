@@ -19,6 +19,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent))
+from src.baseline.cfar import CACFARDetector
 from src.data.generate import generate_clutter, generate_target
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -53,11 +54,12 @@ def snr_benchmark(
     snr_max: float = 25.0,
     n_steps: int = 36,
     n_per_class: int = 200,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     session = ort.InferenceSession("artifacts/model.onnx")
+    cfar = CACFARDetector()
     rng = np.random.default_rng(99)
     snr_values = np.linspace(snr_min, snr_max, n_steps)
-    accuracies = []
+    ml_accs, cfar_accs = [], []
     for snr_db in snr_values:
         targets = np.stack(
             [generate_target(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)]
@@ -67,13 +69,20 @@ def snr_benchmark(
         )
         X = np.concatenate([targets, clutters]).astype(np.float32)
         y = np.array([1] * n_per_class + [0] * n_per_class)
-        preds = session.run(None, {"signal": X})[0].argmax(axis=1)
-        accuracies.append(float((preds == y).mean()))
-    return snr_values, np.array(accuracies)
+
+        preds_ml = session.run(None, {"signal": X})[0].argmax(axis=1)
+        ml_accs.append(float((preds_ml == y).mean()))
+
+        spectra = np.stack([
+            np.abs(np.fft.rfft(x * np.hanning(SIGNAL_LENGTH))) for x in X
+        ])
+        preds_cfar = cfar.detect_batch(spectra).astype(int)
+        cfar_accs.append(float((preds_cfar == y).mean()))
+
+    return snr_values, np.array(ml_accs), np.array(cfar_accs)
 
 
 # ── Signal helpers ────────────────────────────────────────────────────────────
-
 
 def classify(
     session: ort.InferenceSession, signal: np.ndarray
@@ -185,6 +194,12 @@ with tab_demo:
     pred_label, confidence, probs = classify(session, sig)
     correct = pred_label == true_label
 
+    freqs_arr, spec_arr = windowed_spectrum(sig)
+    cfar_detector = CACFARDetector()
+    cfar_detected, cfar_threshold = cfar_detector.detect(spec_arr)
+    cfar_label = "Target" if cfar_detected else "Clutter"
+    cfar_correct = cfar_label == true_label
+
     with col_out:
         border = "#2ecc71" if correct else "#e74c3c"
         icon = "✓" if correct else "✗"
@@ -207,16 +222,33 @@ with tab_demo:
         ca.metric("Target score", f"{probs[1] * 100:.1f}%")
         cb.metric("Clutter score", f"{probs[0] * 100:.1f}%")
 
+        cfar_icon = "✓" if cfar_correct else "✗"
+        cfar_color = "#2ecc71" if cfar_correct else "#e74c3c"
+        st.markdown(
+            f"""
+            <div style="border:1px solid #444; border-radius:8px;
+                        padding:12px 16px; margin-top:8px;">
+                <span style="font-size:11px; color:#666; text-transform:uppercase;
+                             letter-spacing:0.05em">CA-CFAR baseline</span>
+                <div style="font-size:16px; font-weight:bold; color:{cfar_color};
+                            margin-top:4px">{cfar_label} {cfar_icon}</div>
+                <span style="font-size:12px; color:#888">
+                    Doppler peak {"exceeds" if cfar_detected else "below"} threshold
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     sig_color = TARGET_COLOR if pred_label == "Target" else CLUTTER_COLOR
     sig_fill = TARGET_FILL if pred_label == "Target" else CLUTTER_FILL
-    freqs_arr, spec_arr = windowed_spectrum(sig)
     peak_idx = int(np.argmax(spec_arr))
 
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=[
             "Time domain — raw ADC samples",
-            "Frequency domain — what the model processes",
+            "Frequency domain — signal and CFAR threshold",
         ],
         horizontal_spacing=0.08,
     )
@@ -226,8 +258,14 @@ with tab_demo:
     ), row=1, col=1)
     fig.add_trace(go.Scatter(
         x=freqs_arr, y=spec_arr, mode="lines",
+        name="Spectrum",
         line=dict(color=sig_color, width=1.5),
         fill="tozeroy", fillcolor=sig_fill,
+    ), row=1, col=2)
+    fig.add_trace(go.Scatter(
+        x=freqs_arr, y=cfar_threshold, mode="lines",
+        name="CFAR threshold",
+        line=dict(color="#f39c12", width=1.5, dash="dash"),
     ), row=1, col=2)
     fig.add_annotation(
         x=float(freqs_arr[peak_idx]), y=float(spec_arr[peak_idx]),
@@ -236,7 +274,8 @@ with tab_demo:
         font=dict(color=sig_color, size=11),
         row=1, col=2,
     )
-    fig.update_layout(**plot_layout(300))
+    fig.update_layout(**plot_layout(300), showlegend=True,
+                      legend=dict(x=0.52, y=0.97, bgcolor="rgba(0,0,0,0)"))
     fig.update_xaxes(gridcolor=GRID, zeroline=False)
     fig.update_yaxes(gridcolor=GRID, zeroline=False)
     st.plotly_chart(fig, use_container_width=True)
@@ -340,13 +379,14 @@ with tab_signals:
 
 with tab_perf:
     st.markdown(
-        "How well does the classifier perform across different noise conditions? "
-        "The chart shows accuracy measured on 400 test signals per SNR point, "
-        "computed live using the deployed ONNX model."
+        "The ML classifier vs CA-CFAR — the classical radar baseline. "
+        "Accuracy measured on 400 test signals per SNR point. "
+        "CFAR sets an adaptive threshold on the frequency spectrum; "
+        "the ML model learns the full spectral shape."
     )
     st.write("")
 
-    snr_vals, accs = snr_benchmark()
+    snr_vals, ml_accs, cfar_accs = snr_benchmark()
 
     fig3 = go.Figure()
     fig3.add_vrect(x0=-10, x1=0, fillcolor="rgba(231,76,60,0.07)",
@@ -358,12 +398,20 @@ with tab_perf:
         line_width=0, annotation_text="Operational range", annotation_position="top left",
     )
     fig3.add_trace(go.Scatter(
-        x=snr_vals, y=accs * 100,
+        x=snr_vals, y=ml_accs * 100,
         mode="lines+markers",
-        name="Classifier accuracy",
+        name="ML classifier",
         line=dict(color=TARGET_COLOR, width=2.5),
         marker=dict(size=5),
-        hovertemplate="SNR %{x:.1f} dB<br>Accuracy %{y:.1f}%<extra></extra>",
+        hovertemplate="SNR %{x:.1f} dB<br>ML accuracy %{y:.1f}%<extra></extra>",
+    ))
+    fig3.add_trace(go.Scatter(
+        x=snr_vals, y=cfar_accs * 100,
+        mode="lines+markers",
+        name="CA-CFAR baseline",
+        line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
+        marker=dict(size=5, symbol="diamond"),
+        hovertemplate="SNR %{x:.1f} dB<br>CFAR accuracy %{y:.1f}%<extra></extra>",
     ))
     fig3.add_hline(y=80, line_dash="dash", line_color="#e74c3c",
                    annotation_text="80% CI gate", annotation_position="bottom right")
@@ -371,6 +419,8 @@ with tab_perf:
                    annotation_text="Chance level", annotation_position="bottom right")
     fig3.update_layout(
         **plot_layout(420),
+        showlegend=True,
+        legend=dict(x=0.02, y=0.05, bgcolor="rgba(0,0,0,0)"),
         xaxis_title="Signal-to-Noise Ratio (dB)",
         yaxis_title="Accuracy (%)",
         yaxis=dict(range=[0, 105]),
@@ -385,17 +435,18 @@ with tab_perf:
     p3.metric("FPGA target", "< 10 µs", help="Xilinx Vitis AI — margin for signal chain")
 
     st.info(
-        "**SNR context:** Operational radar systems typically work at 0–15 dB SNR depending on "
-        "range, target radar cross-section, and weather conditions. "
-        "The model crosses 95% accuracy around 8 dB and is near-perfect above 12 dB. "
-        "Below −5 dB the problem is fundamentally ambiguous — no detector can reliably "
-        "separate target from noise at that level."
+        "**Why ML outperforms CFAR at low SNR:** CA-CFAR sets a threshold based on the local "
+        "noise floor — it sees the peak power relative to its immediate neighbours. "
+        "At low SNR the peak is weak and easily buried. "
+        "The ML model instead learns the full spectral shape: the sharpness, width, and "
+        "relative height of the peak jointly, making it more robust when the signal is faint."
     )
     st.info(
-        "**Latency context:** A pulsed radar at 10 kHz PRF has roughly 100 µs per pulse "
-        "repetition interval. At 0.035 ms (35 µs) the model fits comfortably on a CPU. "
-        "FPGA deployment via Xilinx Vitis AI targets sub-10 µs, leaving ample margin for "
-        "the rest of the signal processing chain."
+        "**Classical baseline:** the detector applies an MTI (Moving Target Indication) filter "
+        "to suppress the low-frequency clutter band, then looks for a spectral peak that stands "
+        "above the noise floor by a fixed ratio (peak-to-mean > 7.9, tuned on validation data). "
+        "This two-stage pipeline — clutter filter then threshold detector — is standard in "
+        "operational radar signal processing."
     )
 
 
