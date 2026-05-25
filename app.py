@@ -367,7 +367,7 @@ with tab_demo:
         track_positions=track_pos if has_track else None,
         title=f"{true_label} sequence",
     )
-    st.plotly_chart(fig_anim, use_container_width=True)
+    st.plotly_chart(fig_anim)
 
     if has_track and true_label == "Target":
         r_vals = [r for r in track_ranges if r is not None]
@@ -386,7 +386,7 @@ with tab_demo:
             yaxis=dict(title="Range bin", gridcolor=GRID, zeroline=False),
             title="KF track — range position across scans",
         )
-        st.plotly_chart(fig_track, use_container_width=True)
+        st.plotly_chart(fig_track)
 
     if pred_label == "Target":
         st.info(
@@ -436,7 +436,7 @@ with tab_signals:
         fig_t.update_layout(**plot_layout(280),
                             xaxis=dict(title="Doppler bin", gridcolor=GRID),
                             yaxis=dict(title="Range bin", gridcolor=GRID))
-        st.plotly_chart(fig_t, use_container_width=True)
+        st.plotly_chart(fig_t)
     with col_c:
         st.markdown(f"**🌊 Clutter — scan {scan_sel}/{T}**")
         fig_c = go.Figure(go.Heatmap(
@@ -445,7 +445,7 @@ with tab_signals:
         fig_c.update_layout(**plot_layout(280),
                             xaxis=dict(title="Doppler bin", gridcolor=GRID),
                             yaxis=dict(title="Range bin", gridcolor=GRID))
-        st.plotly_chart(fig_c, use_container_width=True)
+        st.plotly_chart(fig_c)
 
     st.success(
         "**Target:** A bright compact blob at a Doppler bin ≥ 5 that drifts in range "
@@ -499,7 +499,7 @@ with tab_perf:
     )
     fig3.update_xaxes(gridcolor=GRID, zeroline=False)
     fig3.update_yaxes(gridcolor=GRID, zeroline=False)
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3)
 
     st.info(
         "**Why the CNN+LSTM dominates at low SNR:** the Kalman tracker requires CFAR "
@@ -596,7 +596,7 @@ with tab_roc:
     )
 
     with col_plot_roc:
-        st.plotly_chart(fig_roc, use_container_width=True)
+        st.plotly_chart(fig_roc)
 
     r1, r2, r3, r4 = st.columns(4)
     r1.metric("ML AUC", f"{ml_auc:.3f}")
