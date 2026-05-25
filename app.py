@@ -217,6 +217,21 @@ with tab_demo:
             else "clean — strong return"
         )
         st.caption(f"SNR {snr:+.0f} dB — {snr_label}")
+        with st.expander("What is dB?"):
+            st.markdown(
+                "**dB (decibel)** is a way of expressing a ratio on a logarithmic scale. "
+                "For signal-to-noise ratio it means: how much stronger is the signal than the background noise?\n\n"
+                "| dB | Signal vs noise |\n"
+                "|---|---|\n"
+                "| −20 dB | Signal is **100× weaker** than noise — almost impossible to detect |\n"
+                "| 0 dB | Signal and noise are **equal strength** |\n"
+                "| 10 dB | Signal is **10× stronger** than noise |\n"
+                "| 20 dB | Signal is **100× stronger** — clean, easy to detect |\n\n"
+                "Every +10 dB means the signal is ten times stronger. "
+                "We use a logarithmic scale because real radar returns span an enormous range — "
+                "a close, large target can be 10,000× stronger than a distant, small one. "
+                "Decibels keep those numbers manageable."
+            )
         seed = st.number_input("Seed", min_value=0, max_value=9999, value=42,
                                help="Fix this to reproduce the same signal.")
 
