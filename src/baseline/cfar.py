@@ -31,7 +31,7 @@ def _peak_to_mean(spectrum: np.ndarray) -> float:
     return float(np.max(doppler_band)) / mean if mean > 0 else 0.0
 
 
-class CACFARDetector:
+class MTIThresholdDetector:
     """
     MTI + spectral peak detector.
 

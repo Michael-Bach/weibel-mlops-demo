@@ -19,7 +19,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.baseline.cfar import CACFARDetector
+from src.baseline.cfar import MTIThresholdDetector
 from src.data.generate import generate_clutter, generate_target
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ def snr_benchmark(
     n_per_class: int = 200,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     session = ort.InferenceSession("artifacts/model.onnx")
-    cfar = CACFARDetector()
+    cfar = MTIThresholdDetector()
     rng = np.random.default_rng(99)
     snr_values = np.linspace(snr_min, snr_max, n_steps)
     ml_accs, cfar_accs = [], []
@@ -195,7 +195,7 @@ with tab_demo:
     correct = pred_label == true_label
 
     freqs_arr, spec_arr = windowed_spectrum(sig)
-    cfar_detector = CACFARDetector()
+    cfar_detector = MTIThresholdDetector()
     cfar_detected, cfar_threshold = cfar_detector.detect(spec_arr)
     cfar_label = "Target" if cfar_detected else "Clutter"
     cfar_correct = cfar_label == true_label
@@ -229,7 +229,7 @@ with tab_demo:
             <div style="border:1px solid #444; border-radius:8px;
                         padding:12px 16px; margin-top:8px;">
                 <span style="font-size:11px; color:#666; text-transform:uppercase;
-                             letter-spacing:0.05em">CA-CFAR baseline</span>
+                             letter-spacing:0.05em">Classical baseline (MTI + peak detector)</span>
                 <div style="font-size:16px; font-weight:bold; color:{cfar_color};
                             margin-top:4px">{cfar_label} {cfar_icon}</div>
                 <span style="font-size:12px; color:#888">
@@ -379,10 +379,8 @@ with tab_signals:
 
 with tab_perf:
     st.markdown(
-        "The ML classifier vs CA-CFAR — the classical radar baseline. "
-        "Accuracy measured on 400 test signals per SNR point. "
-        "CFAR sets an adaptive threshold on the frequency spectrum; "
-        "the ML model learns the full spectral shape."
+        "The ML classifier vs the classical radar baseline — an MTI filter followed by a "
+        "spectral peak threshold. Accuracy measured on 400 test signals per SNR point."
     )
     st.write("")
 
@@ -408,10 +406,10 @@ with tab_perf:
     fig3.add_trace(go.Scatter(
         x=snr_vals, y=cfar_accs * 100,
         mode="lines+markers",
-        name="CA-CFAR baseline",
+        name="Classical baseline",
         line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
         marker=dict(size=5, symbol="diamond"),
-        hovertemplate="SNR %{x:.1f} dB<br>CFAR accuracy %{y:.1f}%<extra></extra>",
+        hovertemplate="SNR %{x:.1f} dB<br>Classical accuracy %{y:.1f}%<extra></extra>",
     ))
     fig3.add_hline(y=80, line_dash="dash", line_color="#e74c3c",
                    annotation_text="80% CI gate", annotation_position="bottom right")
@@ -432,14 +430,14 @@ with tab_perf:
     p1, p2, p3 = st.columns(3)
     p1.metric("p50 inference latency", "0.035 ms", help="Single sample, host CPU")
     p2.metric("p99 inference latency", "0.055 ms", help="Worst-case single sample")
-    p3.metric("FPGA target", "< 10 µs", help="Xilinx Vitis AI — margin for signal chain")
+    p3.metric("FPGA path", "defined", help="ONNX → Xilinx Vitis AI compilation — not included in this repo")
 
     st.info(
-        "**Why ML outperforms CFAR at low SNR:** CA-CFAR sets a threshold based on the local "
-        "noise floor — it sees the peak power relative to its immediate neighbours. "
-        "At low SNR the peak is weak and easily buried. "
-        "The ML model instead learns the full spectral shape: the sharpness, width, and "
-        "relative height of the peak jointly, making it more robust when the signal is faint."
+        "**Why ML outperforms the classical baseline at low SNR:** the classical detector "
+        "looks for a peak that stands above a fixed noise-floor ratio. At low SNR the peak "
+        "is weak and the ratio falls below the threshold — the detector effectively gives up. "
+        "The ML model learns the full spectral shape jointly: sharpness, width, and relative "
+        "height together, making it more robust when the signal is faint."
     )
     st.info(
         "**Classical baseline:** the detector applies an MTI (Moving Target Indication) filter "
@@ -488,9 +486,10 @@ with tab_pipeline:
          "ONNX · MLflow Registry"),
         ("6", "🚀", "Edge Deployment",
          "The 67 KB ONNX file deploys to the radar signal processor — no retraining, "
-         "no ML framework at runtime. It classifies one radar return in 0.035 ms, "
-         "fully self-contained.",
-         "ONNX Runtime · Xilinx Vitis AI FPGA"),
+         "no ML framework at runtime. It classifies one radar return in 0.035 ms on a "
+         "host CPU. The ONNX format is directly accepted by Xilinx Vitis AI for FPGA "
+         "compilation; that path is defined but outside the scope of this demonstrator.",
+         "ONNX Runtime · Xilinx Vitis AI (path defined)"),
     ]
 
     for row_start in range(0, len(steps), 3):

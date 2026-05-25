@@ -41,6 +41,18 @@ pipeline code.
 
 ---
 
+## Scope and Known Limitations
+
+This is a focused demonstrator of MLOps pipeline practice, not a production radar detector. Specifically:
+
+- **Single-pulse, 1D signals.** A real system processes coherent bursts across multiple pulse repetition intervals, producing 2D range-Doppler maps. The pipeline is agnostic to this — only the model and data generator would change.
+- **No I/Q (complex) data.** Real radar digitises in-phase and quadrature components. This demonstrator uses magnitude only, discarding phase information.
+- **Balanced dataset.** Training uses a 50/50 target/clutter split. Operational radar scenes are heavily target-sparse; false alarm rate would need to be the primary design metric.
+- **FPGA deployment path defined, not implemented.** The ONNX format is directly accepted by Xilinx Vitis AI for FPGA compilation. That compilation step and hardware-in-the-loop validation are outside the scope of this repo.
+- **Classical baseline is MTI + peak threshold, not full CFAR.** The comparison detector applies a Moving Target Indication filter followed by a peak-to-mean ratio threshold — the standard two-stage pipeline. A production system would add OS-CFAR or GO-CFAR on top for constant false alarm rate control.
+
+---
+
 ## Architecture
 
 ```mermaid
