@@ -118,7 +118,8 @@ def compute_roc(
 
 def trapz_auc(fpr: np.ndarray, tpr: np.ndarray) -> float:
     order = np.argsort(fpr)
-    return float(np.trapz(tpr[order], fpr[order]))
+    x, y = fpr[order], tpr[order]
+    return float(np.sum((x[1:] - x[:-1]) * (y[1:] + y[:-1]) / 2))
 
 
 # ── Signal helpers ────────────────────────────────────────────────────────────
