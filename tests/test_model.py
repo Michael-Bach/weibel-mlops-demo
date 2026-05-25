@@ -1,75 +1,66 @@
 # tests/test_model.py
 """
-Tests for the RadarClassifier architecture.
-Verifies forward-pass contracts: input/output shapes and logit semantics.
-No training — instantiate, eval, forward only.
+Tests for the CNN+LSTM Range-Doppler classifier.
+Forward-pass contracts: shapes, output range, determinism. No training.
 """
 
-import pytest
 import torch
+import pytest
 
-from src.models.classifier import RadarClassifier, build_model
+from src.data.generator import T, N_RANGE, N_DOPPLER
+from src.model.cnn_lstm import CnnLstmClassifier, build_model
 
-INPUT_DIM = 64
-BATCH_SIZE = 8
+BATCH = 4
 
 
 @pytest.fixture
-def model():
-    m = RadarClassifier(input_dim=INPUT_DIM, hidden_dims=[32, 16], dropout=0.0)
+def model() -> CnnLstmClassifier:
+    m = build_model(lstm_hidden=64)
     m.eval()
     return m
 
 
-def test_forward_batch_output_shape(model):
-    x = torch.randn(BATCH_SIZE, INPUT_DIM)
-    out = model(x)
-    assert out.shape == (BATCH_SIZE, 2)
+def _dummy(batch: int = BATCH) -> torch.Tensor:
+    return torch.randn(batch, T, 1, N_RANGE, N_DOPPLER)
 
 
-def test_forward_single_sample_shape(model):
-    x = torch.randn(1, INPUT_DIM)
-    out = model(x)
-    assert out.shape == (1, 2)
+def test_forward_output_shape(model):
+    out = model(_dummy())
+    assert out.shape == (BATCH, 1)
 
 
-def test_output_is_raw_logits(model):
-    # Logits are not bounded to [0,1]; softmax probabilities must sum to 1
-    x = torch.randn(BATCH_SIZE, INPUT_DIM)
-    out = model(x)
-    probs = torch.softmax(out, dim=1)
-    assert torch.allclose(probs.sum(dim=1), torch.ones(BATCH_SIZE), atol=1e-5)
+def test_forward_single_sample(model):
+    out = model(_dummy(1))
+    assert out.shape == (1, 1)
 
 
-def test_build_model_matches_params():
-    # build_model reads params.yaml — runs from repo root in CI and locally
-    model = build_model("params.yaml")
-    assert isinstance(model, RadarClassifier)
-    # params.yaml sets signal_length=128; model input dim must match
-    x = torch.randn(2, 128)
-    out = model(x)
-    assert out.shape == (2, 2)
+def test_output_is_probability(model):
+    """Sigmoid output must be in [0, 1]."""
+    out = model(_dummy())
+    assert (out >= 0.0).all() and (out <= 1.0).all()
 
 
-def test_eval_mode_is_deterministic(model):
-    x = torch.randn(4, INPUT_DIM)
+def test_eval_is_deterministic(model):
+    x = _dummy()
     out1 = model(x)
     out2 = model(x)
     assert torch.allclose(out1, out2)
 
 
-def test_fft_mode_output_shape():
-    # rfft of length-N input produces N//2+1 bins; model must account for this
-    m = RadarClassifier(input_dim=INPUT_DIM, hidden_dims=[32], dropout=0.0, use_fft=True)
-    m.eval()
-    x = torch.randn(BATCH_SIZE, INPUT_DIM)
-    out = m(x)
-    assert out.shape == (BATCH_SIZE, 2)
+def test_build_model_returns_correct_type():
+    m = build_model()
+    assert isinstance(m, CnnLstmClassifier)
 
 
-def test_fft_mode_matches_params():
-    model = build_model("params.yaml")
-    assert model.use_fft is True
-    x = torch.randn(2, 128)  # raw time-domain signals
+def test_input_shape_matches_spec(model):
+    """Model must accept exactly (batch, T=8, 1, 64, 128)."""
+    x = torch.randn(2, 8, 1, 64, 128)
     out = model(x)
-    assert out.shape == (2, 2)
+    assert out.shape == (2, 1)
+
+
+def test_different_lstm_hidden():
+    m = build_model(lstm_hidden=32)
+    m.eval()
+    out = m(_dummy(2))
+    assert out.shape == (2, 1)
