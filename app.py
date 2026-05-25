@@ -274,7 +274,7 @@ with tab_demo:
         font=dict(color=sig_color, size=11),
         row=1, col=2,
     )
-    fig.update_layout(**plot_layout(300), showlegend=True,
+    fig.update_layout(**{**plot_layout(300), "showlegend": True},
                       legend=dict(x=0.52, y=0.97, bgcolor="rgba(0,0,0,0)"))
     fig.update_xaxes(gridcolor=GRID, zeroline=False)
     fig.update_yaxes(gridcolor=GRID, zeroline=False)
@@ -416,8 +416,7 @@ with tab_perf:
     fig3.add_hline(y=50, line_dash="dot", line_color="#666",
                    annotation_text="Chance level", annotation_position="bottom right")
     fig3.update_layout(
-        **plot_layout(420),
-        showlegend=True,
+        **{**plot_layout(420), "showlegend": True},
         legend=dict(x=0.02, y=0.05, bgcolor="rgba(0,0,0,0)"),
         xaxis_title="Signal-to-Noise Ratio (dB)",
         yaxis_title="Accuracy (%)",
