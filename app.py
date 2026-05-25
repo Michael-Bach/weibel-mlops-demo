@@ -50,8 +50,8 @@ def load_model() -> ort.InferenceSession | None:
 
 @st.cache_data(show_spinner="Computing accuracy across SNR range…")
 def snr_benchmark(
-    snr_min: float = -10.0,
-    snr_max: float = 25.0,
+    snr_min: float = -20.0,
+    snr_max: float = 40.0,
     n_steps: int = 36,
     n_per_class: int = 200,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -208,7 +208,7 @@ with tab_demo:
         )
         snr = st.slider(
             "Signal-to-Noise Ratio (dB)",
-            min_value=-10.0, max_value=25.0, value=10.0, step=0.5,
+            min_value=-20.0, max_value=40.0, value=10.0, step=0.5,
         )
         snr_label = (
             "very noisy — near detection limit" if snr < 0
@@ -348,7 +348,7 @@ with tab_signals:
 
     snr_exp = st.slider(
         "Signal-to-Noise Ratio (dB)",
-        min_value=-10.0, max_value=25.0, value=10.0, step=1.0,
+        min_value=-20.0, max_value=40.0, value=10.0, step=1.0,
         key="snr_explorer",
         help="Drag left to add noise and watch how the spectral signatures degrade.",
     )
@@ -428,12 +428,12 @@ with tab_perf:
     snr_vals, ml_accs, cfar_accs = snr_benchmark()
 
     fig3 = go.Figure()
-    fig3.add_vrect(x0=-10, x1=0, fillcolor="rgba(231,76,60,0.07)",
+    fig3.add_vrect(x0=-20, x1=0, fillcolor="rgba(231,76,60,0.07)",
                    line_width=0, annotation_text="Very low SNR", annotation_position="top left")
     fig3.add_vrect(x0=0, x1=8, fillcolor="rgba(241,196,15,0.07)",
                    line_width=0, annotation_text="Marginal", annotation_position="top left")
     fig3.add_vrect(
-        x0=8, x1=25, fillcolor="rgba(46,204,113,0.05)",
+        x0=8, x1=40, fillcolor="rgba(46,204,113,0.05)",
         line_width=0, annotation_text="Operational range", annotation_position="top left",
     )
     fig3.add_trace(go.Scatter(
@@ -504,7 +504,7 @@ with tab_roc:
     with col_ctrl_roc:
         snr_roc = st.slider(
             "Signal-to-Noise Ratio (dB)",
-            min_value=-10.0, max_value=25.0, value=5.0, step=1.0,
+            min_value=-20.0, max_value=40.0, value=5.0, step=1.0,
             key="snr_roc",
             help="Low SNR is where the two detectors diverge most — drag left to see the gap open up.",
         )
