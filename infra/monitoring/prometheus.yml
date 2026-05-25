@@ -27,14 +27,6 @@ scrape_configs:
     static_configs:
       - targets: ["pushgateway:9091"]
 
-  # ── ONNX serving — scrape /metrics from serving pods ─────────────────────
-  # Pods annotate themselves with prometheus.io/scrape=true (see serving-deployment.yaml).
-  # In a full Kubernetes setup, use kubernetes_sd_configs instead.
-  - job_name: "radar-onnx-serving"
-    static_configs:
-      - targets: ["radar-onnx-serving:8080"]
-    metrics_path: /metrics
-
   # ── GPU utilization — NVIDIA DCGM Exporter ───────────────────────────────
   # Deploy dcgm-exporter as a DaemonSet on GPU nodes.
   # Exposes per-GPU utilization, memory, and temperature metrics.

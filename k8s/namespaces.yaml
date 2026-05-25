@@ -1,21 +1,13 @@
 ---
 # Namespace isolation — workloads are separated by function.
-# Training jobs have no network access to the serving namespace;
-# monitoring scrapes both but cannot modify them.
+# Training Jobs run in ml-training; monitoring scrapes ml-training but cannot modify it.
+# Inference runs directly on the radar signal processor hardware — no serving namespace.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ml-training
   labels:
     purpose: model-training
-    managed-by: kubectl
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ml-serving
-  labels:
-    purpose: model-serving
     managed-by: kubectl
 ---
 apiVersion: v1

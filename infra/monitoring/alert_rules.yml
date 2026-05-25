@@ -41,44 +41,6 @@ groups:
             The pipeline will have exited with code 1. Investigate
             data quality or model convergence.
 
-  # ── Model serving health ────────────────────────────────────────────────────
-  - name: model-serving
-    interval: 30s
-    rules:
-      - alert: InferenceLatencyHigh
-        expr: histogram_quantile(0.99, rate(inference_duration_seconds_bucket[5m])) > 0.005
-        for: 2m
-        labels:
-          severity: warning
-          team: mlops
-        annotations:
-          summary: "p99 inference latency > 5 ms"
-          description: >
-            Radar classifier p99 latency is {{ $value | humanizeDuration }}.
-            Edge timing budget may be exceeded. Check hardware load.
-
-      - alert: InferenceErrorRateHigh
-        expr: rate(inference_errors_total[5m]) > 0.01
-        for: 1m
-        labels:
-          severity: critical
-          team: mlops
-        annotations:
-          summary: "Inference error rate > 1 %"
-          description: >
-            Classifier returning errors at {{ $value | humanizePercentage }} rate.
-            Possible causes: model file corruption, OOM, hardware fault.
-
-      - alert: ServingPodsDown
-        expr: kube_deployment_status_replicas_available{namespace="ml-serving", deployment="radar-onnx-serving"} < 1
-        for: 1m
-        labels:
-          severity: critical
-          team: mlops
-        annotations:
-          summary: "No serving pods available"
-          description: "All radar-onnx-serving pods are down in ml-serving namespace."
-
   # ── GPU resources ────────────────────────────────────────────────────────────
   - name: gpu-resources
     interval: 30s

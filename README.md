@@ -43,9 +43,6 @@ flowchart TD
         subgraph NS_TRAIN["ml-training namespace"]
             JOB["Training Job\nnvidia.com/gpu: 1\nRBAC · resource limits"]
         end
-        subgraph NS_SERVE["ml-serving namespace"]
-            SERVE["ONNX serving\nliveness + readiness probes"]
-        end
         subgraph NS_MON["monitoring namespace"]
             PROM["Prometheus\nalert rules"]
             GRAF["Grafana dashboards"]
@@ -69,9 +66,7 @@ flowchart TD
     JOB --> EXP --> CAND
     CAND -->|"human review"| VALIDATED
     VALIDATED -->|"scripts/register_model.py"| PROD
-    PROD --> ONNX_RT --> FPGA --> RADAR
-    RADAR -.->|"live returns"| SERVE
-    SERVE -.->|"/metrics"| PROM
+    PROD -->|"onnx artifact"| ONNX_RT --> FPGA --> RADAR
     PROM --> GRAF
     PROM -.->|"PSI > 0.20 — drift alert"| SG
 ```
@@ -95,12 +90,11 @@ weibel-mlops-demo/
 │   ├── calibrate.py               # Platt scaling calibration
 │   └── plot_roc.py                # ROC curve
 ├── k8s/
-│   ├── namespaces.yaml            # ml-training, ml-serving, monitoring
+│   ├── namespaces.yaml            # ml-training, monitoring
 │   ├── rbac.yaml                  # ServiceAccount + Role + RoleBinding (least-privilege)
 │   ├── secrets.yaml               # Secret structure template (values injected at deploy time)
 │   ├── pvc.yaml                   # NFS-backed PV + PVCs shared across namespaces
 │   ├── training-job.yaml          # GPU Job: resource limits, probes, initContainer
-│   ├── serving-deployment.yaml    # ONNX serving Deployment + Service + Prometheus scrape
 │   └── helm/                      # Helm chart — single command deploys the full stack
 │       ├── Chart.yaml
 │       ├── values.yaml            # All tunable defaults, documented
@@ -108,7 +102,7 @@ weibel-mlops-demo/
 ├── infra/
 │   ├── docker-compose.monitoring.yml  # Local: Prometheus + Grafana + MLflow
 │   ├── monitoring/
-│   │   ├── prometheus.yml             # Scrape config — serving, GPU, pushgateway
+│   │   ├── prometheus.yml             # Scrape config — GPU, pushgateway
 │   │   └── alert_rules.yml            # Training failure, drift, GPU saturation alerts
 │   └── terraform/
 │       ├── main.tf                    # Namespaces, NVIDIA plugin, Prometheus stack, MLflow
@@ -251,8 +245,9 @@ act push   # executes .github/workflows/ml_pipeline.yml in Docker
 
 ## Kubernetes — Training Infrastructure
 
-The cluster uses three namespaces for isolation. Training Jobs have no network access
-to the serving namespace; monitoring scrapes both but cannot modify them.
+The cluster uses two namespaces for isolation: training and monitoring.
+The trained ONNX artifact is deployed directly to the radar signal processor hardware —
+no serving pods run in the cluster.
 
 ```bash
 # Bootstrap the cluster
@@ -365,8 +360,6 @@ docker compose -f infra/docker-compose.monitoring.yml up -d
 | Metric | Source | Purpose |
 |---|---|---|
 | `radar_training_val_accuracy` | Training Job (pushgateway) | Pipeline health, accuracy gate |
-| `inference_duration_seconds` | ONNX serving | Latency monitoring, edge timing budget |
-| `inference_errors_total` | ONNX serving | Model corruption, hardware faults |
 | `DCGM_FI_DEV_GPU_UTIL` | NVIDIA DCGM exporter | GPU saturation, scheduling pressure |
 | `DCGM_FI_DEV_FB_USED` | NVIDIA DCGM exporter | GPU memory pressure, OOM risk |
 | `radar_psi_score` | Drift detection job | Distribution shift, retraining trigger |
@@ -378,8 +371,6 @@ docker compose -f infra/docker-compose.monitoring.yml up -d
 |---|---|---|
 | `TrainingJobFailed` | Any ml-training Job failed | Critical |
 | `TrainingJobStalled` | No active Jobs for > 25 h | Warning |
-| `InferenceLatencyHigh` | p99 > 5 ms | Warning |
-| `InferenceErrorRateHigh` | Error rate > 1 % | Critical |
 | `GPUSaturation` | GPU util > 95 % for 15 min | Warning |
 | `FeatureDriftAlert` | PSI > 0.20 | Critical |
 

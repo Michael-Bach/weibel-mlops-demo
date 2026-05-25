@@ -1,85 +1,10 @@
----
-# ONNX model serving — ml-serving namespace.
-# Serves model.onnx from the shared NFS PVC via a lightweight HTTP endpoint.
-# Replace the image with your actual serving container (triton, torchserve,
-# or a custom FastAPI wrapper around onnxruntime).
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: radar-onnx-serving
-  namespace: ml-serving
-  labels:
-    app: radar-onnx-serving
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: radar-onnx-serving
-  template:
-    metadata:
-      labels:
-        app: radar-onnx-serving
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
-    spec:
-      serviceAccountName: model-server
-      containers:
-        - name: onnx-server
-          image: YOUR_REGISTRY/weibel-radar-serve:latest
-          ports:
-            - containerPort: 8080
-              name: http
-          env:
-            - name: MODEL_PATH
-              value: /models/model.onnx
-          resources:
-            requests:
-              cpu: "500m"
-              memory: "512Mi"
-            limits:
-              cpu: "2"
-              memory: "1Gi"
-
-          # Liveness: server process is alive
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 15
-            failureThreshold: 3
-
-          # Readiness: model is loaded and serving
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            failureThreshold: 3
-
-          volumeMounts:
-            - name: model-store
-              mountPath: /models
-              readOnly: true
-
-      volumes:
-        - name: model-store
-          persistentVolumeClaim:
-            claimName: model-store-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: radar-onnx-serving
-  namespace: ml-serving
-spec:
-  selector:
-    app: radar-onnx-serving
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
-  type: ClusterIP
+# The ONNX model is NOT served from a Kubernetes pod.
+#
+# After promotion to Production in the MLflow Registry, the ONNX artifact is
+# pulled and deployed directly onto the radar signal processor hardware:
+#
+#   - Embedded Linux targets: ONNX Runtime (onnxruntime-linux-x64)
+#   - FPGA targets: Xilinx Vitis AI compilation from the same .onnx file
+#
+# The hardware node runs inference locally — no network hop, no cluster dependency.
+# Deployment is handled by the platform integration team, not the MLOps pipeline.

@@ -4,7 +4,6 @@
 image:
   registry: YOUR_REGISTRY
   trainTag: latest
-  serveTag: latest
   pullPolicy: IfNotPresent
 
 # ── Training ──────────────────────────────────────────────────────────────────
@@ -24,18 +23,6 @@ training:
     node-type: gpu-training
   backoffLimit: 2
   ttlSecondsAfterFinished: 86400
-
-# ── Serving ───────────────────────────────────────────────────────────────────
-serving:
-  namespace: ml-serving
-  replicas: 2
-  resources:
-    requests:
-      cpu: "500m"
-      memory: "512Mi"
-    limits:
-      cpu: "2"
-      memory: "1Gi"
 
 # ── MLflow ────────────────────────────────────────────────────────────────────
 mlflow:
