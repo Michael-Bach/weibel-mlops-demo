@@ -1,32 +1,18 @@
 stages:
-  generate:
-    cmd: PYTHONPATH=. python src/data/generate.py
-    deps:
-      - src/data/generate.py
-      - params.yaml
-    params:
-      - data
-    outs:
-      - data/raw/X.npy
-      - data/raw/y.npy
-      - data/processed/X_train.npy
-      - data/processed/X_val.npy
-      - data/processed/y_train.npy
-      - data/processed/y_val.npy
+  # ── Range-Doppler pipeline (feature/range-doppler-2d) ─────────────────────
+  # Data is generated on-the-fly in src/train.py — no separate generate stage.
 
   train:
-    cmd: PYTHONPATH=. python src/training/train.py
+    cmd: PYTHONPATH=. python src/train.py
     deps:
-      - src/training/train.py
-      - src/models/classifier.py
-      - data/processed/X_train.npy
-      - data/processed/X_val.npy
-      - data/processed/y_train.npy
-      - data/processed/y_val.npy
+      - src/train.py
+      - src/data/generator.py
+      - src/model/cnn_lstm.py
       - params.yaml
     params:
-      - model
-      - training
+      - rd_data
+      - rd_model
+      - rd_training
     outs:
       - artifacts/model_best.pt
     metrics:
@@ -34,13 +20,14 @@ stages:
           cache: false
 
   export:
-    cmd: PYTHONPATH=. python scripts/export_onnx.py
+    cmd: PYTHONPATH=. python scripts/export_onnx_rd.py
     deps:
-      - scripts/export_onnx.py
-      - src/models/classifier.py
+      - scripts/export_onnx_rd.py
+      - src/model/cnn_lstm.py
       - artifacts/model_best.pt
       - params.yaml
     params:
       - onnx
+      - rd_model
     outs:
       - artifacts/model.onnx

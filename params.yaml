@@ -21,4 +21,22 @@ training:
 onnx:
   opset_version: 17
   model_path: "artifacts/model.onnx"
-  
+
+# ── Range-Doppler pipeline ────────────────────────────────────────────────────
+rd_data:
+  n_samples: 4000
+  snr_db: 10.0
+  T: 8
+  n_range: 64
+  n_doppler: 128
+  val_split: 0.2
+  noise_seed: 42
+
+rd_model:
+  lstm_hidden: 64
+
+rd_training:
+  epochs: 20
+  batch_size: 32
+  learning_rate: 0.001
+  baseline_accuracy: 0.80
