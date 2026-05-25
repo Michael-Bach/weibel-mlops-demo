@@ -8,7 +8,7 @@
 
 ---
 
-## Just want to see it work?
+## Are you non-technical and just want to see it work?
 
 No setup needed. Click the badge above or go to **[weibel-mlops-demo.streamlit.app](https://weibel-mlops-demo.streamlit.app)** to open the live demo in your browser.
 
