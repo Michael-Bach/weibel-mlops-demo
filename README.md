@@ -4,7 +4,7 @@
 > built to demonstrate production-grade MLOps thinking for defense and
 > safety-critical environments.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app.streamlit.app)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://weibel-mlops-demo.streamlit.app)
 
 ---
 
