@@ -19,7 +19,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.baseline.cfar import MTIThresholdDetector
+from src.baseline.cfar import DEFAULT_THRESHOLD, MTIThresholdDetector
 from src.data.generate import generate_clutter, generate_target
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -82,6 +82,45 @@ def snr_benchmark(
     return snr_values, np.array(ml_accs), np.array(cfar_accs)
 
 
+@st.cache_data(show_spinner="Computing ROC data…")
+def roc_data(snr_db: float, n_per_class: int = 600) -> dict:
+    """Collect continuous scores for ML and classical detectors at a given SNR."""
+    session = ort.InferenceSession("artifacts/model.onnx")
+    detector = MTIThresholdDetector()
+    rng = np.random.default_rng(77)
+    targets = np.stack([generate_target(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)])
+    clutters = np.stack([generate_clutter(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)])
+    X = np.concatenate([targets, clutters]).astype(np.float32)
+    y = np.array([1] * n_per_class + [0] * n_per_class)
+    # ML: P(target) via stable softmax
+    logits = session.run(None, {"signal": X})[0]
+    exp_l = np.exp(logits - logits.max(axis=1, keepdims=True))
+    ml_scores = (exp_l / exp_l.sum(axis=1, keepdims=True))[:, 1]
+    # Classical: peak-to-mean ratio
+    spectra = np.stack([np.abs(np.fft.rfft(x * np.hanning(SIGNAL_LENGTH))) for x in X])
+    classical_scores = detector.score_batch(spectra)
+    return {"y": y, "ml_scores": ml_scores, "classical_scores": classical_scores}
+
+
+def compute_roc(
+    scores: np.ndarray, labels: np.ndarray, n_points: int = 400
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lo, hi = float(scores.min()), float(scores.max())
+    thresholds = np.concatenate([[hi + 1], np.linspace(hi, lo, n_points), [lo - 1]])
+    fprs, tprs = [], []
+    pos, neg = (labels == 1).sum(), (labels == 0).sum()
+    for t in thresholds:
+        preds = scores >= t
+        tprs.append(float((preds & (labels == 1)).sum()) / pos if pos else 0.0)
+        fprs.append(float((preds & (labels == 0)).sum()) / neg if neg else 0.0)
+    return np.array(fprs), np.array(tprs), thresholds
+
+
+def trapz_auc(fpr: np.ndarray, tpr: np.ndarray) -> float:
+    order = np.argsort(fpr)
+    return float(np.trapz(tpr[order], fpr[order]))
+
+
 # ── Signal helpers ────────────────────────────────────────────────────────────
 
 def classify(
@@ -137,10 +176,11 @@ m4.metric("Parameters", "16,838", "weights learned from data")
 
 st.divider()
 
-tab_demo, tab_signals, tab_perf, tab_pipeline = st.tabs([
+tab_demo, tab_signals, tab_perf, tab_roc, tab_pipeline = st.tabs([
     "🎯  Live Classifier",
     "📊  Signal Explorer",
     "📈  Detection Performance",
+    "📉  ROC Curve",
     "⚙️  How the Pipeline Works",
 ])
 
@@ -447,7 +487,99 @@ with tab_perf:
     )
 
 
-# ── Tab 4: Pipeline ────────────────────────────────────────────────────────────
+# ── Tab 4: ROC Curve ──────────────────────────────────────────────────────────
+
+with tab_roc:
+    st.markdown(
+        "The ROC curve shows the full trade-off between **detection probability (Pd)** "
+        "and **false alarm rate (Pfa)** as the decision threshold varies. "
+        "A curve that hugs the top-left corner — high Pd at low Pfa — wins at every operating point. "
+        "AUC (area under the curve) summarises that into one number: 1.0 is perfect, 0.5 is a coin flip."
+    )
+    st.write("")
+
+    col_ctrl_roc, col_plot_roc = st.columns([1, 2], gap="large")
+
+    with col_ctrl_roc:
+        snr_roc = st.slider(
+            "Signal-to-Noise Ratio (dB)",
+            min_value=-10.0, max_value=25.0, value=5.0, step=1.0,
+            key="snr_roc",
+            help="Low SNR is where the two detectors diverge most — drag left to see the gap open up.",
+        )
+        classical_thr = st.slider(
+            "Classical threshold (peak-to-mean ratio)",
+            min_value=1.0, max_value=20.0, value=float(DEFAULT_THRESHOLD), step=0.1,
+            key="classical_thr",
+            help="Move to slide the operating point along the classical ROC curve. "
+                 "Lower threshold → more detections but more false alarms.",
+        )
+        st.caption(
+            f"Default threshold {DEFAULT_THRESHOLD:.2f} was tuned for maximum accuracy at 10 dB SNR."
+        )
+
+    data = roc_data(snr_roc)
+    y_roc = data["y"]
+    ml_fpr, ml_tpr, _ = compute_roc(data["ml_scores"], y_roc)
+    cl_fpr, cl_tpr, cl_thrs = compute_roc(data["classical_scores"], y_roc)
+    ml_auc = trapz_auc(ml_fpr, ml_tpr)
+    cl_auc = trapz_auc(cl_fpr, cl_tpr)
+
+    # Operating point on the classical curve
+    op_idx = int(np.argmin(np.abs(cl_thrs - classical_thr)))
+    op_fpr, op_tpr = float(cl_fpr[op_idx]), float(cl_tpr[op_idx])
+
+    fig_roc = go.Figure()
+    fig_roc.add_trace(go.Scatter(
+        x=[0, 1], y=[0, 1], mode="lines",
+        name="Chance (AUC 0.500)",
+        line=dict(color="#555", width=1, dash="dot"),
+    ))
+    fig_roc.add_trace(go.Scatter(
+        x=ml_fpr, y=ml_tpr, mode="lines",
+        name=f"ML classifier  (AUC {ml_auc:.3f})",
+        line=dict(color=TARGET_COLOR, width=2.5),
+        hovertemplate="Pfa %{x:.3f}<br>Pd %{y:.3f}<extra>ML</extra>",
+    ))
+    fig_roc.add_trace(go.Scatter(
+        x=cl_fpr, y=cl_tpr, mode="lines",
+        name=f"Classical baseline  (AUC {cl_auc:.3f})",
+        line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
+        hovertemplate="Pfa %{x:.3f}<br>Pd %{y:.3f}<extra>Classical</extra>",
+    ))
+    fig_roc.add_trace(go.Scatter(
+        x=[op_fpr], y=[op_tpr], mode="markers",
+        name=f"Operating point  (thr {classical_thr:.1f})",
+        marker=dict(color=CLUTTER_COLOR, size=13, symbol="diamond",
+                    line=dict(color="white", width=2)),
+    ))
+    fig_roc.update_layout(
+        **{**plot_layout(440), "showlegend": True},
+        xaxis_title="False Alarm Rate (Pfa)",
+        yaxis_title="Detection Probability (Pd)",
+        xaxis=dict(range=[-0.02, 1.02], gridcolor=GRID, zeroline=False),
+        yaxis=dict(range=[-0.02, 1.04], gridcolor=GRID, zeroline=False),
+        legend=dict(x=0.40, y=0.10, bgcolor="rgba(0,0,0,0)"),
+    )
+    with col_plot_roc:
+        st.plotly_chart(fig_roc, use_container_width=True)
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("ML AUC", f"{ml_auc:.3f}")
+    r2.metric("Classical AUC", f"{cl_auc:.3f}")
+    r3.metric("Pd at threshold", f"{op_tpr:.1%}")
+    r4.metric("Pfa at threshold", f"{op_fpr:.1%}")
+
+    st.info(
+        "**Why the classical baseline has a step-shaped ROC at low SNR:** the peak-to-mean score "
+        "clusters tightly — targets and clutter scores overlap heavily — so only a narrow range "
+        "of thresholds separates them, and the curve jumps rather than sweeping smoothly. "
+        "The ML classifier produces well-separated probability scores even at low SNR, "
+        "giving it a smoother curve and a larger AUC."
+    )
+
+
+# ── Tab 5: Pipeline ────────────────────────────────────────────────────────────
 
 with tab_pipeline:
     st.markdown(

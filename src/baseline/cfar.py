@@ -22,6 +22,7 @@ SIGNAL_LENGTH = 128
 _MTI_MIN_BIN = 5
 # Peak-to-mean ratio threshold, tuned on 1 000 validation signals at 10 dB SNR.
 _THRESHOLD = 7.87
+DEFAULT_THRESHOLD = _THRESHOLD  # public alias used by the Streamlit app
 
 
 def _peak_to_mean(spectrum: np.ndarray) -> float:
@@ -63,6 +64,14 @@ class MTIThresholdDetector:
         )
 
         return bool(detected), threshold_curve
+
+    def score(self, spectrum: np.ndarray) -> float:
+        """Continuous detection score (peak-to-mean ratio). Used for ROC analysis."""
+        return _peak_to_mean(spectrum)
+
+    def score_batch(self, spectra: np.ndarray) -> np.ndarray:
+        """Continuous scores for a batch of spectra shaped (n_samples, n_bins)."""
+        return np.array([_peak_to_mean(s) for s in spectra])
 
     def detect_batch(self, spectra: np.ndarray) -> np.ndarray:
         """
