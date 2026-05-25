@@ -39,14 +39,8 @@ flowchart TD
         GATE["Accuracy gate\nsys.exit(1) if acc < 0.80"]
     end
 
-    subgraph K8S["Kubernetes Cluster"]
-        subgraph NS_TRAIN["ml-training namespace"]
-            JOB["Training Job\nnvidia.com/gpu: 1\nRBAC · resource limits"]
-        end
-        subgraph NS_MON["monitoring namespace"]
-            PROM["Prometheus\nalert rules"]
-            GRAF["Grafana dashboards"]
-        end
+    subgraph K8S["Kubernetes Cluster — ml-training namespace"]
+        JOB["Training Job\nnvidia.com/gpu: 1\nRBAC · resource limits"]
     end
 
     subgraph REG["MLflow Registry"]
@@ -54,6 +48,11 @@ flowchart TD
         CAND["Candidate"]
         VALIDATED["Validated"]
         PROD["Production"]
+    end
+
+    subgraph MON["Observability — monitoring namespace"]
+        PROM["Prometheus\nalert rules"]
+        GRAF["Grafana dashboards"]
     end
 
     ONNX_RT["ONNX Runtime\nembedded Linux"]
