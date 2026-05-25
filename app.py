@@ -1,9 +1,8 @@
 """
-Streamlit demo — Radar Signal Classifier.
+Streamlit demo — Range-Doppler Radar Target Classifier.
 
-Target audience: non-ML recruiters and Weibel radar/defense personnel.
-Focuses on what the system does and why it makes sense for radar,
-not on internal ML mechanics.
+Multi-scan temporal pipeline: a CNN+LSTM model classifies sequences of 8
+consecutive Range-Doppler maps and decides whether a target track is present.
 
 Run:
     streamlit run app.py
@@ -19,8 +18,8 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent))
-from src.baseline.cfar import DEFAULT_THRESHOLD, MTIThresholdDetector
-from src.data.generate import generate_clutter, generate_target
+from src.baseline.kalman_cfar import KalmanCFARDetector
+from src.data.generator import N_DOPPLER, N_RANGE, T, generate_dataset
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -30,17 +29,14 @@ st.set_page_config(
     layout="wide",
 )
 
-SIGNAL_LENGTH = 128
-
 TARGET_COLOR = "#4C9BE8"
-TARGET_FILL = "rgba(76, 155, 232, 0.15)"
+TARGET_FILL  = "rgba(76, 155, 232, 0.15)"
 CLUTTER_COLOR = "#E8924C"
-CLUTTER_FILL = "rgba(232, 146, 76, 0.15)"
+CLUTTER_FILL  = "rgba(232, 146, 76, 0.15)"
 GRID = "rgba(128,128,128,0.15)"
 
 
 # ── Cached resources ──────────────────────────────────────────────────────────
-
 
 @st.cache_resource
 def load_model() -> ort.InferenceSession | None:
@@ -50,55 +46,40 @@ def load_model() -> ort.InferenceSession | None:
 
 @st.cache_data(show_spinner="Computing accuracy across SNR range…")
 def snr_benchmark(
-    snr_min: float = -20.0,
-    snr_max: float = 40.0,
-    n_steps: int = 36,
-    n_per_class: int = 200,
+    snr_min: float = -10.0,
+    snr_max: float = 25.0,
+    n_steps: int = 24,
+    n_per_class: int = 60,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     session = ort.InferenceSession("artifacts/model.onnx")
-    cfar = MTIThresholdDetector()
-    rng = np.random.default_rng(99)
+    detector = KalmanCFARDetector()
     snr_values = np.linspace(snr_min, snr_max, n_steps)
     ml_accs, cfar_accs = [], []
-    for snr_db in snr_values:
-        targets = np.stack(
-            [generate_target(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)]
-        )
-        clutters = np.stack(
-            [generate_clutter(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)]
-        )
-        X = np.concatenate([targets, clutters]).astype(np.float32)
-        y = np.array([1] * n_per_class + [0] * n_per_class)
 
-        preds_ml = session.run(None, {"signal": X})[0].argmax(axis=1)
+    for snr_db in snr_values:
+        X, y = generate_dataset(n_per_class * 2, float(snr_db), seed=99)
+        # ML inference: (n, T, 64, 128) → add channel → (n, T, 1, 64, 128)
+        X_onnx = X[:, :, np.newaxis, :, :].astype(np.float32)
+        probs = session.run(None, {"sequence": X_onnx})[0].squeeze(1)
+        preds_ml = (probs >= 0.5).astype(int)
         ml_accs.append(float((preds_ml == y).mean()))
 
-        spectra = np.stack([
-            np.abs(np.fft.rfft(x * np.hanning(SIGNAL_LENGTH))) for x in X
-        ])
-        preds_cfar = cfar.detect_batch(spectra).astype(int)
-        cfar_accs.append(float((preds_cfar == y).mean()))
+        preds_kf = detector.detect_batch(X).astype(int)
+        cfar_accs.append(float((preds_kf == y).mean()))
 
     return snr_values, np.array(ml_accs), np.array(cfar_accs)
 
 
 @st.cache_data(show_spinner="Computing ROC data…")
-def roc_data(snr_db: float, n_per_class: int = 600) -> dict:
-    """Collect continuous scores for ML and classical detectors at a given SNR."""
+def roc_data(snr_db: float, n_per_class: int = 150) -> dict:
     session = ort.InferenceSession("artifacts/model.onnx")
-    detector = MTIThresholdDetector()
-    rng = np.random.default_rng(77)
-    targets = np.stack([generate_target(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)])
-    clutters = np.stack([generate_clutter(SIGNAL_LENGTH, snr_db, rng) for _ in range(n_per_class)])
-    X = np.concatenate([targets, clutters]).astype(np.float32)
-    y = np.array([1] * n_per_class + [0] * n_per_class)
-    # ML: P(target) via stable softmax
-    logits = session.run(None, {"signal": X})[0]
-    exp_l = np.exp(logits - logits.max(axis=1, keepdims=True))
-    ml_scores = (exp_l / exp_l.sum(axis=1, keepdims=True))[:, 1]
-    # Classical: peak-to-mean ratio
-    spectra = np.stack([np.abs(np.fft.rfft(x * np.hanning(SIGNAL_LENGTH))) for x in X])
-    classical_scores = detector.score_batch(spectra)
+    detector = KalmanCFARDetector()
+    X, y = generate_dataset(n_per_class * 2, snr_db, seed=77)
+
+    X_onnx = X[:, :, np.newaxis, :, :].astype(np.float32)
+    ml_scores = session.run(None, {"sequence": X_onnx})[0].squeeze(1)
+    classical_scores = detector.score_batch(X)
+
     return {"y": y, "ml_scores": ml_scores, "classical_scores": classical_scores}
 
 
@@ -122,25 +103,6 @@ def trapz_auc(fpr: np.ndarray, tpr: np.ndarray) -> float:
     return float(np.sum((x[1:] - x[:-1]) * (y[1:] + y[:-1]) / 2))
 
 
-# ── Signal helpers ────────────────────────────────────────────────────────────
-
-def classify(
-    session: ort.InferenceSession, signal: np.ndarray
-) -> tuple[str, float, np.ndarray]:
-    x = signal[np.newaxis, :].astype(np.float32)
-    logits = session.run(None, {"signal": x})[0][0]
-    probs = np.exp(logits) / np.exp(logits).sum()
-    pred = int(np.argmax(logits))
-    return ("Target" if pred == 1 else "Clutter"), float(probs[pred]), probs
-
-
-def windowed_spectrum(signal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Hanning-windowed magnitude spectrum — matches the model's internal FFT."""
-    mag = np.abs(np.fft.rfft(signal * np.hanning(SIGNAL_LENGTH)))
-    freqs = np.fft.rfftfreq(SIGNAL_LENGTH)
-    return freqs, mag
-
-
 def plot_layout(height: int = 300) -> dict:
     return dict(
         height=height,
@@ -151,29 +113,117 @@ def plot_layout(height: int = 300) -> dict:
     )
 
 
+# ── Inference helpers ─────────────────────────────────────────────────────────
+
+def classify_sequence(
+    session: ort.InferenceSession, sequence: np.ndarray
+) -> float:
+    """Return P(target present) for a single sequence (T, 64, 128)."""
+    x = sequence[np.newaxis, :, np.newaxis, :, :].astype(np.float32)  # (1,T,1,64,128)
+    return float(session.run(None, {"sequence": x})[0][0, 0])
+
+
+def _animated_rdmap(
+    sequence: np.ndarray,
+    track_positions: list | None = None,
+    title: str = "Range-Doppler Sequence",
+) -> go.Figure:
+    """Plotly animated heatmap cycling through T scans with optional track overlay."""
+    z_max = float(np.percentile(np.abs(sequence), 98))
+    z_max = max(z_max, 1e-3)
+
+    frames = []
+    for t in range(sequence.shape[0]):
+        data: list[go.BaseTraceType] = [go.Heatmap(
+            z=sequence[t],
+            colorscale="RdBu",
+            zmin=-z_max, zmax=z_max,
+            showscale=True,
+            colorbar=dict(thickness=12, len=0.7, title="Amplitude"),
+        )]
+        if track_positions and track_positions[t] is not None:
+            r_pos, d_pos = track_positions[t]
+            data.append(go.Scatter(
+                x=[d_pos], y=[r_pos],
+                mode="markers",
+                name="KF track",
+                marker=dict(
+                    color="yellow", size=14, symbol="cross",
+                    line=dict(color="black", width=1.5),
+                ),
+            ))
+        frames.append(go.Frame(
+            data=data,
+            name=str(t),
+            layout=go.Layout(title_text=f"{title} — scan {t + 1}/{T}"),
+        ))
+
+    fig = go.Figure(
+        data=frames[0].data,
+        frames=frames,
+        layout=go.Layout(
+            title=dict(text=f"{title} — scan 1/{T}", font=dict(size=14)),
+            height=380,
+            margin=dict(t=50, b=60, l=60, r=20),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(title="Doppler bin", gridcolor=GRID, zeroline=False),
+            yaxis=dict(title="Range bin", gridcolor=GRID, zeroline=False),
+            showlegend=bool(track_positions),
+            legend=dict(x=0.01, y=0.99, bgcolor="rgba(0,0,0,0)"),
+            updatemenus=[dict(
+                type="buttons",
+                showactive=False,
+                y=-0.12, x=0.5, xanchor="center",
+                buttons=[
+                    dict(label="▶ Play", method="animate",
+                         args=[None, {"fromcurrent": True,
+                                      "frame": {"duration": 350, "redraw": True},
+                                      "transition": {"duration": 0}}]),
+                    dict(label="⏸ Pause", method="animate",
+                         args=[[None], {"mode": "immediate",
+                                        "transition": {"duration": 0}}]),
+                ],
+            )],
+            sliders=[dict(
+                currentvalue=dict(prefix="Scan ", font=dict(size=12)),
+                pad=dict(b=10, t=0),
+                steps=[dict(
+                    args=[[f.name], {"mode": "immediate",
+                                     "frame": {"duration": 0, "redraw": True},
+                                     "transition": {"duration": 0}}],
+                    label=str(int(f.name) + 1),
+                    method="animate",
+                ) for f in frames],
+            )],
+        ),
+    )
+    return fig
+
+
 # ── Header ────────────────────────────────────────────────────────────────────
 
 session = load_model()
 
-st.title("📡 Radar Signal Classifier")
+st.title("📡 Radar Target Classifier — Multi-Scan Range-Doppler")
 st.markdown(
     "An automated pipeline that trains, validates, and deploys an AI model that separates "
-    "**radar targets** (aircraft, ships, projectiles) from **background clutter** "
-    "(ground returns, sea surface, weather) — from raw sensor data to edge deployment."
+    "**radar targets** (aircraft, ships, projectiles) from **background clutter** — by analysing "
+    "**sequences of 8 Range-Doppler maps** and detecting whether a coherent moving track is present."
 )
 
 if session is None:
     st.error(
         "Model not found at `artifacts/model.onnx`. "
-        "Run `python scripts/export_onnx.py` first."
+        "Run `python src/train.py && python scripts/export_onnx_rd.py` first."
     )
     st.stop()
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Inference latency", "0.035 ms", "p50, host CPU")
-m2.metric("Model file size", "67 KB", "self-contained ONNX")
+m1.metric("Scans per decision", f"T = {T}", "temporal context")
+m2.metric("Map resolution", f"{N_RANGE}×{N_DOPPLER}", "range × Doppler bins")
 m3.metric("Validation accuracy", "≥ 80%", "CI pipeline gate")
-m4.metric("Parameters", "16,838", "weights learned from data")
+m4.metric("Architecture", "CNN+LSTM", "shared encoder + sequence model")
 
 st.divider()
 
@@ -189,26 +239,38 @@ tab_demo, tab_signals, tab_perf, tab_roc, tab_pipeline = st.tabs([
 # ── Tab 1: Live Classifier ─────────────────────────────────────────────────────
 
 with tab_demo:
-    st.markdown(
-        "Select a signal type and noise level. The model classifies it in real time "
-        "using the same ONNX file that would be deployed to the radar signal processor."
-    )
-    st.write("")
+    with st.expander("What is a scan sequence?"):
+        st.markdown(
+            "A **Range-Doppler map** is a 2D image produced by a radar after processing one "
+            "batch of received pulses (one *coherent processing interval*, or CPI). "
+            "The horizontal axis is **Doppler frequency** — proportional to the target's "
+            "radial velocity. The vertical axis is **range** — distance from the radar.\n\n"
+            "A single map may contain a faint target blob buried in noise. "
+            "By analysing a **sequence of T=8 consecutive maps**, the model can "
+            "exploit the fact that a real target *drifts consistently* in range as it moves, "
+            "while clutter and noise do not. The LSTM part of the model learns this "
+            "temporal consistency pattern across scans.\n\n"
+            "| | Single map | Sequence of 8 |\n"
+            "|---|---|---|\n"
+            "| Target blob | Weak, noisy | Drifts predictably in range |\n"
+            "| Clutter | Spatially correlated | No consistent drift |\n"
+            "| Model confidence | Low at marginal SNR | Much higher — uses motion |"
+        )
 
     col_ctrl, col_out = st.columns([1, 2], gap="large")
 
     with col_ctrl:
         signal_choice = st.radio(
-            "Signal type",
+            "Sequence type",
             ["Target", "Clutter", "🎲 Random"],
             help=(
-                "**Target** — moving object with coherent Doppler return.\n\n"
+                "**Target** — moving object with coherent Doppler return drifting in range.\n\n"
                 "**Clutter** — slow-moving background (ground, sea surface)."
             ),
         )
         snr = st.slider(
             "Signal-to-Noise Ratio (dB)",
-            min_value=-20.0, max_value=40.0, value=10.0, step=0.5,
+            min_value=-10.0, max_value=25.0, value=10.0, step=0.5,
         )
         snr_label = (
             "very noisy — near detection limit" if snr < 0
@@ -219,42 +281,47 @@ with tab_demo:
         st.caption(f"SNR {snr:+.0f} dB — {snr_label}")
         with st.expander("What is dB?"):
             st.markdown(
-                "**dB (decibel)** is a way of expressing a ratio on a logarithmic scale. "
-                "For signal-to-noise ratio it means: how much stronger is the signal than the background noise?\n\n"
-                "| dB | Signal vs noise |\n"
-                "|---|---|\n"
-                "| −20 dB | Signal is **100× weaker** than noise — almost impossible to detect |\n"
-                "| 0 dB | Signal and noise are **equal strength** |\n"
-                "| 10 dB | Signal is **10× stronger** than noise |\n"
-                "| 20 dB | Signal is **100× stronger** — clean, easy to detect |\n\n"
-                "Every +10 dB means the signal is ten times stronger. "
-                "We use a logarithmic scale because real radar returns span an enormous range — "
-                "a close, large target can be 10,000× stronger than a distant, small one. "
-                "Decibels keep those numbers manageable."
+                "**dB (decibel)** is a logarithmic ratio. For SNR: how much stronger is the "
+                "signal than background noise?\n\n"
+                "| dB | Signal vs noise |\n|---|---|\n"
+                "| −10 dB | Signal is **10× weaker** |\n"
+                "| 0 dB | Equal strength |\n"
+                "| 10 dB | Signal is **10× stronger** |\n"
+                "| 20 dB | Signal is **100× stronger** |"
             )
         seed = st.number_input("Seed", min_value=0, max_value=9999, value=42,
-                               help="Fix this to reproduce the same signal.")
+                               help="Fix this to reproduce the same sequence.")
 
     rng = np.random.default_rng(int(seed))
     if signal_choice == "Target":
-        sig = generate_target(SIGNAL_LENGTH, snr, rng)
         true_label = "Target"
     elif signal_choice == "Clutter":
-        sig = generate_clutter(SIGNAL_LENGTH, snr, rng)
         true_label = "Clutter"
     else:
         true_label = "Target" if rng.random() > 0.5 else "Clutter"
-        gen_fn = generate_target if true_label == "Target" else generate_clutter
-        sig = gen_fn(SIGNAL_LENGTH, snr, rng)
 
-    pred_label, confidence, probs = classify(session, sig)
+    # Generate a small batch and pick a sample with the right label
+    label_int = 1 if true_label == "Target" else 0
+    X_seq, y_seq = generate_dataset(10, snr, seed=int(seed))
+    match_idx = np.where(y_seq == label_int)[0]
+    # Fallback: generate fresh if not found (very rare with 10 samples)
+    if len(match_idx) == 0:
+        from src.data.generator import _clutter_sequence, _target_sequence
+        fn = _target_sequence if true_label == "Target" else _clutter_sequence
+        sequence = fn(rng, snr)
+    else:
+        sequence = X_seq[match_idx[0]]  # (T, 64, 128)
+
+    prob = classify_sequence(session, sequence)
+    pred_label = "Target" if prob >= 0.5 else "Clutter"
     correct = pred_label == true_label
 
-    freqs_arr, spec_arr = windowed_spectrum(sig)
-    cfar_detector = MTIThresholdDetector()
-    cfar_detected, cfar_threshold = cfar_detector.detect(spec_arr)
-    cfar_label = "Target" if cfar_detected else "Clutter"
-    cfar_correct = cfar_label == true_label
+    detector = KalmanCFARDetector()
+    track_pos = detector.track_positions(sequence)
+    kf_detected = detector.detect_sequence(sequence)
+    kf_label = "Target" if kf_detected else "Clutter"
+    kf_correct = kf_label == true_label
+    kf_score = detector.score_sequence(sequence)
 
     with col_out:
         border = "#2ecc71" if correct else "#e74c3c"
@@ -266,88 +333,72 @@ with tab_demo:
                         padding:20px; text-align:center; margin-bottom:16px;">
                 <div style="font-size:40px">{emoji}</div>
                 <h2 style="margin:8px 0; color:{border}">{pred_label} {icon}</h2>
-                <p style="font-size:20px; margin:0">{confidence * 100:.1f}% confidence</p>
+                <p style="font-size:20px; margin:0">P(target) = {prob:.1%}</p>
                 <p style="color:#888; font-size:13px; margin:6px 0">
-                    True signal type: <strong>{true_label}</strong>
+                    True label: <strong>{true_label}</strong>
                 </p>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        ca, cb = st.columns(2)
-        ca.metric("Target score", f"{probs[1] * 100:.1f}%")
-        cb.metric("Clutter score", f"{probs[0] * 100:.1f}%")
-
-        cfar_icon = "✓" if cfar_correct else "✗"
-        cfar_color = "#2ecc71" if cfar_correct else "#e74c3c"
+        kf_color = "#2ecc71" if kf_correct else "#e74c3c"
+        kf_icon = "✓" if kf_correct else "✗"
+        hits_str = f"{int(kf_score * T)}/{T} scans tracked"
         st.markdown(
             f"""
             <div style="border:1px solid #444; border-radius:8px;
                         padding:12px 16px; margin-top:8px;">
                 <span style="font-size:11px; color:#666; text-transform:uppercase;
-                             letter-spacing:0.05em">Classical baseline (MTI + peak detector)</span>
-                <div style="font-size:16px; font-weight:bold; color:{cfar_color};
-                            margin-top:4px">{cfar_label} {cfar_icon}</div>
-                <span style="font-size:12px; color:#888">
-                    Doppler peak {"exceeds" if cfar_detected else "below"} threshold
-                </span>
+                             letter-spacing:0.05em">Classical baseline (KF + CFAR)</span>
+                <div style="font-size:16px; font-weight:bold; color:{kf_color};
+                            margin-top:4px">{kf_label} {kf_icon}</div>
+                <span style="font-size:12px; color:#888">{hits_str}</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    sig_color = TARGET_COLOR if pred_label == "Target" else CLUTTER_COLOR
-    sig_fill = TARGET_FILL if pred_label == "Target" else CLUTTER_FILL
-    peak_idx = int(np.argmax(spec_arr))
+    # Track overlay: show range positions across scans
+    has_track = any(p is not None for p in track_pos)
+    track_ranges = [p[0] if p is not None else None for p in track_pos]
 
-    fig = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=[
-            "Time domain — raw ADC samples",
-            "Frequency domain — signal and CFAR threshold",
-        ],
-        horizontal_spacing=0.08,
+    fig_anim = _animated_rdmap(
+        sequence,
+        track_positions=track_pos if has_track else None,
+        title=f"{true_label} sequence",
     )
-    fig.add_trace(go.Scatter(
-        x=np.arange(SIGNAL_LENGTH), y=sig, mode="lines",
-        line=dict(color=sig_color, width=1.5),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=freqs_arr, y=spec_arr, mode="lines",
-        name="Spectrum",
-        line=dict(color=sig_color, width=1.5),
-        fill="tozeroy", fillcolor=sig_fill,
-    ), row=1, col=2)
-    fig.add_trace(go.Scatter(
-        x=freqs_arr, y=cfar_threshold, mode="lines",
-        name="CFAR threshold",
-        line=dict(color="#f39c12", width=1.5, dash="dash"),
-    ), row=1, col=2)
-    fig.add_annotation(
-        x=float(freqs_arr[peak_idx]), y=float(spec_arr[peak_idx]),
-        text=f"Peak @ {freqs_arr[peak_idx]:.2f}",
-        showarrow=True, arrowhead=2, arrowcolor=sig_color,
-        font=dict(color=sig_color, size=11),
-        row=1, col=2,
-    )
-    fig.update_layout(**{**plot_layout(300), "showlegend": True},
-                      legend=dict(x=0.52, y=0.97, bgcolor="rgba(0,0,0,0)"))
-    fig.update_xaxes(gridcolor=GRID, zeroline=False)
-    fig.update_yaxes(gridcolor=GRID, zeroline=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_anim, use_container_width=True)
+
+    if has_track and true_label == "Target":
+        r_vals = [r for r in track_ranges if r is not None]
+        scan_ids = [i for i, r in enumerate(track_ranges) if r is not None]
+        fig_track = go.Figure(go.Scatter(
+            x=[s + 1 for s in scan_ids], y=r_vals,
+            mode="lines+markers",
+            line=dict(color="yellow", width=2),
+            marker=dict(size=8, color="yellow", symbol="cross"),
+            name="Track range",
+        ))
+        fig_track.update_layout(
+            **plot_layout(180),
+            xaxis=dict(title="Scan number", gridcolor=GRID, zeroline=False,
+                       tickmode="array", tickvals=list(range(1, T + 1))),
+            yaxis=dict(title="Range bin", gridcolor=GRID, zeroline=False),
+            title="KF track — range position across scans",
+        )
+        st.plotly_chart(fig_track, use_container_width=True)
 
     if pred_label == "Target":
         st.info(
-            "**Why target?** The frequency spectrum shows a sharp isolated peak — the signature "
-            "of a coherent Doppler return. A moving object reflects the radar pulse at a slightly "
-            "different frequency, determined by its radial velocity. "
-            "That peak is what the model detects."
+            "**Why target?** A compact bright blob drifts consistently in range across the "
+            "8 scans — the signature of a moving object at constant velocity. "
+            "The LSTM learns to recognise this temporal drift pattern even at low SNR."
         )
     else:
         st.info(
-            "**Why clutter?** Energy is spread across low frequencies with no dominant peak — the "
-            "signature of correlated, slowly-varying ground or sea returns. Clutter lacks the "
-            "coherent Doppler component produced by a moving object."
+            "**Why clutter?** Energy is diffuse and concentrated near range=0, Doppler=0 "
+            "with no consistent drift across scans — the spatial pattern of correlated "
+            "ground or sea returns rather than a moving point target."
         )
 
 
@@ -355,115 +406,83 @@ with tab_demo:
 
 with tab_signals:
     st.markdown(
-        "Compare target and clutter signals side by side at the same noise level. "
-        "The frequency domain reveals why the classifier works — the two signal types "
-        "have fundamentally different spectral shapes."
+        "Compare a target sequence and a clutter sequence side by side. "
+        "Select a scan number to see the Range-Doppler maps at that instant."
     )
     st.write("")
 
     snr_exp = st.slider(
-        "Signal-to-Noise Ratio (dB)",
-        min_value=-20.0, max_value=40.0, value=10.0, step=1.0,
-        key="snr_explorer",
-        help="Drag left to add noise and watch how the spectral signatures degrade.",
+        "Signal-to-Noise Ratio (dB)", min_value=-10.0, max_value=25.0,
+        value=10.0, step=1.0, key="snr_explorer",
     )
     seed_exp = st.number_input("Seed", min_value=0, max_value=9999, value=7, key="seed_exp")
+    scan_sel = st.slider("Scan number", min_value=1, max_value=T, value=1, key="scan_sel")
 
-    rng_exp = np.random.default_rng(int(seed_exp))
-    sig_t = generate_target(SIGNAL_LENGTH, snr_exp, rng_exp)
-    sig_c = generate_clutter(SIGNAL_LENGTH, snr_exp, rng_exp)
-    freqs_t, spec_t = windowed_spectrum(sig_t)
-    freqs_c, spec_c = windowed_spectrum(sig_c)
-    peak_t = int(np.argmax(spec_t))
-    peak_c = int(np.argmax(spec_c))
+    X_exp, y_exp = generate_dataset(20, snr_exp, seed=int(seed_exp))
+    tgt_seq = X_exp[y_exp == 1][0] if (y_exp == 1).any() else X_exp[0]
+    clt_seq = X_exp[y_exp == 0][0] if (y_exp == 0).any() else X_exp[-1]
 
-    fig2 = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=[
-            "🎯 Target — time domain",  "🌊 Clutter — time domain",
-            "🎯 Target — frequency domain", "🌊 Clutter — frequency domain",
-        ],
-        vertical_spacing=0.14,
-        horizontal_spacing=0.08,
-    )
-    # Time domain
-    fig2.add_trace(go.Scatter(x=np.arange(SIGNAL_LENGTH), y=sig_t, mode="lines",
-                              line=dict(color=TARGET_COLOR, width=1.5)), row=1, col=1)
-    fig2.add_trace(go.Scatter(x=np.arange(SIGNAL_LENGTH), y=sig_c, mode="lines",
-                              line=dict(color=CLUTTER_COLOR, width=1.5)), row=1, col=2)
-    # Frequency domain
-    fig2.add_trace(go.Scatter(x=freqs_t, y=spec_t, mode="lines",
-                              line=dict(color=TARGET_COLOR, width=1.5),
-                              fill="tozeroy", fillcolor=TARGET_FILL), row=2, col=1)
-    fig2.add_trace(go.Scatter(x=freqs_c, y=spec_c, mode="lines",
-                              line=dict(color=CLUTTER_COLOR, width=1.5),
-                              fill="tozeroy", fillcolor=CLUTTER_FILL), row=2, col=2)
-    # Annotations
-    fig2.add_annotation(
-        x=float(freqs_t[peak_t]), y=float(spec_t[peak_t]),
-        text="Sharp Doppler peak", showarrow=True, arrowhead=2,
-        arrowcolor=TARGET_COLOR, font=dict(color=TARGET_COLOR, size=11),
-        row=2, col=1,
-    )
-    fig2.add_annotation(
-        x=float(freqs_c[peak_c]), y=float(spec_c[peak_c]),
-        text="Diffuse low-freq energy", showarrow=True, arrowhead=2,
-        arrowcolor=CLUTTER_COLOR, font=dict(color=CLUTTER_COLOR, size=11),
-        row=2, col=2,
-    )
-    fig2.update_layout(**plot_layout(520))
-    fig2.update_xaxes(gridcolor=GRID, zeroline=False)
-    fig2.update_yaxes(gridcolor=GRID, zeroline=False)
-    st.plotly_chart(fig2, use_container_width=True)
+    scan_t = tgt_seq[scan_sel - 1]
+    scan_c = clt_seq[scan_sel - 1]
+    z_max = float(np.percentile(np.abs(np.concatenate([scan_t, scan_c])), 98))
+    z_max = max(z_max, 1e-3)
 
-    col_ta, col_ca = st.columns(2)
-    with col_ta:
-        st.success(
-            "**Target:** A moving object reflects the radar pulse at a frequency shifted "
-            "by its velocity (Doppler effect). This appears as a **sharp isolated peak** "
-            "in the spectrum. Even at low SNR, the peak persists and the model can detect it."
-        )
-    with col_ca:
-        st.warning(
-            "**Clutter:** Ground and sea returns are correlated and slow-varying — they "
-            "concentrate energy at **low frequencies** with no dominant peak. "
-            "At high SNR this pattern is obvious; at low SNR clutter blends into noise."
-        )
+    col_t, col_c = st.columns(2)
+    with col_t:
+        st.markdown(f"**🎯 Target — scan {scan_sel}/{T}**")
+        fig_t = go.Figure(go.Heatmap(
+            z=scan_t, colorscale="RdBu", zmin=-z_max, zmax=z_max, showscale=False,
+        ))
+        fig_t.update_layout(**plot_layout(280),
+                            xaxis=dict(title="Doppler bin", gridcolor=GRID),
+                            yaxis=dict(title="Range bin", gridcolor=GRID))
+        st.plotly_chart(fig_t, use_container_width=True)
+    with col_c:
+        st.markdown(f"**🌊 Clutter — scan {scan_sel}/{T}**")
+        fig_c = go.Figure(go.Heatmap(
+            z=scan_c, colorscale="RdBu", zmin=-z_max, zmax=z_max, showscale=False,
+        ))
+        fig_c.update_layout(**plot_layout(280),
+                            xaxis=dict(title="Doppler bin", gridcolor=GRID),
+                            yaxis=dict(title="Range bin", gridcolor=GRID))
+        st.plotly_chart(fig_c, use_container_width=True)
+
+    st.success(
+        "**Target:** A bright compact blob at a Doppler bin ≥ 5 that drifts in range "
+        "as you move the scan slider. The Doppler offset means the object is moving."
+    )
+    st.warning(
+        "**Clutter:** Energy concentrated near Doppler=0 (stationary/slow returns) "
+        "and near range=0, with no coherent drift across scans."
+    )
 
 
 # ── Tab 3: Detection Performance ──────────────────────────────────────────────
 
 with tab_perf:
     st.markdown(
-        "The ML classifier vs the classical radar baseline — an MTI filter followed by a "
-        "spectral peak threshold. Accuracy measured on 400 test signals per SNR point."
+        "CNN+LSTM classifier vs the classical Kalman filter + CA-CFAR baseline. "
+        "Accuracy measured on 120 test sequences per SNR point."
     )
     st.write("")
 
     snr_vals, ml_accs, cfar_accs = snr_benchmark()
 
     fig3 = go.Figure()
-    fig3.add_vrect(x0=-20, x1=0, fillcolor="rgba(231,76,60,0.07)",
+    fig3.add_vrect(x0=-10, x1=0, fillcolor="rgba(231,76,60,0.07)",
                    line_width=0, annotation_text="Very low SNR", annotation_position="top left")
     fig3.add_vrect(x0=0, x1=8, fillcolor="rgba(241,196,15,0.07)",
                    line_width=0, annotation_text="Marginal", annotation_position="top left")
-    fig3.add_vrect(
-        x0=8, x1=40, fillcolor="rgba(46,204,113,0.05)",
-        line_width=0, annotation_text="Operational range", annotation_position="top left",
-    )
+    fig3.add_vrect(x0=8, x1=25, fillcolor="rgba(46,204,113,0.05)",
+                   line_width=0, annotation_text="Operational range", annotation_position="top left")
     fig3.add_trace(go.Scatter(
-        x=snr_vals, y=ml_accs * 100,
-        mode="lines+markers",
-        name="ML classifier",
-        line=dict(color=TARGET_COLOR, width=2.5),
-        marker=dict(size=5),
+        x=snr_vals, y=ml_accs * 100, mode="lines+markers",
+        name="CNN+LSTM", line=dict(color=TARGET_COLOR, width=2.5), marker=dict(size=5),
         hovertemplate="SNR %{x:.1f} dB<br>ML accuracy %{y:.1f}%<extra></extra>",
     ))
     fig3.add_trace(go.Scatter(
-        x=snr_vals, y=cfar_accs * 100,
-        mode="lines+markers",
-        name="Classical baseline",
-        line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
+        x=snr_vals, y=cfar_accs * 100, mode="lines+markers",
+        name="KF + CFAR baseline", line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
         marker=dict(size=5, symbol="diamond"),
         hovertemplate="SNR %{x:.1f} dB<br>Classical accuracy %{y:.1f}%<extra></extra>",
     ))
@@ -482,24 +501,18 @@ with tab_perf:
     fig3.update_yaxes(gridcolor=GRID, zeroline=False)
     st.plotly_chart(fig3, use_container_width=True)
 
-    p1, p2, p3 = st.columns(3)
-    p1.metric("p50 inference latency", "0.035 ms", help="Single sample, host CPU")
-    p2.metric("p99 inference latency", "0.055 ms", help="Worst-case single sample")
-    p3.metric("FPGA path", "defined", help="ONNX → Xilinx Vitis AI compilation — not included in this repo")
-
     st.info(
-        "**Why ML outperforms the classical baseline at low SNR:** the classical detector "
-        "looks for a peak that stands above a fixed noise-floor ratio. At low SNR the peak "
-        "is weak and the ratio falls below the threshold — the detector effectively gives up. "
-        "The ML model learns the full spectral shape jointly: sharpness, width, and relative "
-        "height together, making it more robust when the signal is faint."
+        "**Why the CNN+LSTM dominates at low SNR:** the Kalman tracker requires CFAR "
+        "to produce a detection before it can initiate a track — at low SNR the target "
+        "blob falls below the CFAR threshold and the tracker never starts. "
+        "The ML model learns the full 2D spatial and temporal pattern jointly, "
+        "finding sub-threshold signatures the CFAR misses."
     )
     st.info(
-        "**Classical baseline:** the detector applies an MTI (Moving Target Indication) filter "
-        "to suppress the low-frequency clutter band, then looks for a spectral peak that stands "
-        "above the noise floor by a fixed ratio (peak-to-mean > 7.9, tuned on validation data). "
-        "This two-stage pipeline — clutter filter then threshold detector — is standard in "
-        "operational radar signal processing."
+        "**Classical baseline:** CA-CFAR per range row detects local peaks above the "
+        "surrounding noise level. Detected peaks are associated to a constant-velocity "
+        "Kalman track using Mahalanobis gating. A sequence is declared target-present "
+        "if the track is maintained across ≥ 4 of 8 scans."
     )
 
 
@@ -509,8 +522,7 @@ with tab_roc:
     st.markdown(
         "The ROC curve shows the full trade-off between **detection probability (Pd)** "
         "and **false alarm rate (Pfa)** as the decision threshold varies. "
-        "A curve that hugs the top-left corner — high Pd at low Pfa — wins at every operating point. "
-        "AUC (area under the curve) summarises that into one number: 1.0 is perfect, 0.5 is a coin flip."
+        "AUC = 1.0 is perfect, 0.5 is a coin flip."
     )
     st.write("")
 
@@ -519,53 +531,58 @@ with tab_roc:
     with col_ctrl_roc:
         snr_roc = st.slider(
             "Signal-to-Noise Ratio (dB)",
-            min_value=-20.0, max_value=40.0, value=5.0, step=1.0,
+            min_value=-10.0, max_value=25.0, value=5.0, step=1.0,
             key="snr_roc",
-            help="Low SNR is where the two detectors diverge most — drag left to see the gap open up.",
         )
-        classical_thr = st.slider(
-            "Classical threshold (peak-to-mean ratio)",
-            min_value=1.0, max_value=20.0, value=float(DEFAULT_THRESHOLD), step=0.1,
-            key="classical_thr",
-            help="Move to slide the operating point along the classical ROC curve. "
-                 "Lower threshold → more detections but more false alarms.",
+        ml_thr = st.slider(
+            "ML threshold (P(target))",
+            min_value=0.01, max_value=0.99, value=0.50, step=0.01,
+            key="ml_thr",
+            help="Slide to move the ML operating point along its ROC curve.",
         )
-        st.caption(
-            f"Default threshold {DEFAULT_THRESHOLD:.2f} was tuned for maximum accuracy at 10 dB SNR."
+        kf_thr = st.slider(
+            "KF threshold (hit fraction)",
+            min_value=0.0, max_value=1.0, value=0.5, step=0.125,
+            key="kf_thr",
+            help="Hit fraction = tracked_scans / T. 0.5 = ≥4/8 scans (default).",
         )
 
     data = roc_data(snr_roc)
     y_roc = data["y"]
-    ml_fpr, ml_tpr, _ = compute_roc(data["ml_scores"], y_roc)
+    ml_fpr, ml_tpr, ml_thrs = compute_roc(data["ml_scores"], y_roc)
     cl_fpr, cl_tpr, cl_thrs = compute_roc(data["classical_scores"], y_roc)
     ml_auc = trapz_auc(ml_fpr, ml_tpr)
     cl_auc = trapz_auc(cl_fpr, cl_tpr)
 
-    # Operating point on the classical curve
-    op_idx = int(np.argmin(np.abs(cl_thrs - classical_thr)))
-    op_fpr, op_tpr = float(cl_fpr[op_idx]), float(cl_tpr[op_idx])
+    ml_op_idx = int(np.argmin(np.abs(ml_thrs - ml_thr)))
+    cl_op_idx = int(np.argmin(np.abs(cl_thrs - kf_thr)))
 
     fig_roc = go.Figure()
     fig_roc.add_trace(go.Scatter(
-        x=[0, 1], y=[0, 1], mode="lines",
-        name="Chance (AUC 0.500)",
+        x=[0, 1], y=[0, 1], mode="lines", name="Chance (AUC 0.500)",
         line=dict(color="#555", width=1, dash="dot"),
     ))
     fig_roc.add_trace(go.Scatter(
         x=ml_fpr, y=ml_tpr, mode="lines",
-        name=f"ML classifier  (AUC {ml_auc:.3f})",
+        name=f"CNN+LSTM  (AUC {ml_auc:.3f})",
         line=dict(color=TARGET_COLOR, width=2.5),
         hovertemplate="Pfa %{x:.3f}<br>Pd %{y:.3f}<extra>ML</extra>",
     ))
     fig_roc.add_trace(go.Scatter(
         x=cl_fpr, y=cl_tpr, mode="lines",
-        name=f"Classical baseline  (AUC {cl_auc:.3f})",
+        name=f"KF + CFAR  (AUC {cl_auc:.3f})",
         line=dict(color=CLUTTER_COLOR, width=2.5, dash="dash"),
-        hovertemplate="Pfa %{x:.3f}<br>Pd %{y:.3f}<extra>Classical</extra>",
+        hovertemplate="Pfa %{x:.3f}<br>Pd %{y:.3f}<extra>KF+CFAR</extra>",
     ))
     fig_roc.add_trace(go.Scatter(
-        x=[op_fpr], y=[op_tpr], mode="markers",
-        name=f"Operating point  (thr {classical_thr:.1f})",
+        x=[float(ml_fpr[ml_op_idx])], y=[float(ml_tpr[ml_op_idx])],
+        mode="markers", name=f"ML op. point (thr {ml_thr:.2f})",
+        marker=dict(color=TARGET_COLOR, size=13, symbol="circle",
+                    line=dict(color="white", width=2)),
+    ))
+    fig_roc.add_trace(go.Scatter(
+        x=[float(cl_fpr[cl_op_idx])], y=[float(cl_tpr[cl_op_idx])],
+        mode="markers", name=f"KF op. point (thr {kf_thr:.3f})",
         marker=dict(color=CLUTTER_COLOR, size=13, symbol="diamond",
                     line=dict(color="white", width=2)),
     ))
@@ -577,21 +594,21 @@ with tab_roc:
         yaxis=dict(range=[-0.02, 1.04], gridcolor=GRID, zeroline=False),
         legend=dict(x=0.40, y=0.10, bgcolor="rgba(0,0,0,0)"),
     )
+
     with col_plot_roc:
         st.plotly_chart(fig_roc, use_container_width=True)
 
     r1, r2, r3, r4 = st.columns(4)
     r1.metric("ML AUC", f"{ml_auc:.3f}")
-    r2.metric("Classical AUC", f"{cl_auc:.3f}")
-    r3.metric("Pd at threshold", f"{op_tpr:.1%}")
-    r4.metric("Pfa at threshold", f"{op_fpr:.1%}")
+    r2.metric("KF+CFAR AUC", f"{cl_auc:.3f}")
+    r3.metric("ML Pd", f"{float(ml_tpr[ml_op_idx]):.1%}")
+    r4.metric("ML Pfa", f"{float(ml_fpr[ml_op_idx]):.1%}")
 
     st.info(
-        "**Why the classical baseline has a step-shaped ROC at low SNR:** the peak-to-mean score "
-        "clusters tightly — targets and clutter scores overlap heavily — so only a narrow range "
-        "of thresholds separates them, and the curve jumps rather than sweeping smoothly. "
-        "The ML classifier produces well-separated probability scores even at low SNR, "
-        "giving it a smoother curve and a larger AUC."
+        "**KF score = hit fraction:** the continuous score for the classical baseline "
+        "is the fraction of T scans where a detection was associated to the track "
+        "(e.g., 6/8 = 0.75). This gives a coarse-grained ROC curve with discrete steps "
+        "at multiples of 1/T, in contrast to the ML model's smooth probability output."
     )
 
 
@@ -607,19 +624,19 @@ with tab_pipeline:
 
     steps = [
         ("1", "📡", "Synthetic Data Generation",
-         "Generates thousands of labelled radar returns with controllable SNR, Doppler "
-         "frequency, and clutter structure. Every dataset is pinned to an exact seed — "
-         "anyone can reproduce the exact same data from the same parameters.",
+         "Generates thousands of labelled Range-Doppler sequences (T=8 maps each) with "
+         "controllable SNR and Doppler structure. Every dataset is pinned to an exact seed — "
+         "anyone can reproduce the exact same sequences from the same parameters.",
          "Python · NumPy · DVC"),
         ("2", "🔬", "Automated Testing",
-         "Before training starts, 23 unit tests verify data shapes, model output format, "
-         "and that the ONNX graph matches the PyTorch model to numerical precision. "
+         "Before training starts, unit tests verify data shapes (n, 8, 64, 128), model "
+         "forward-pass contracts, ONNX export correctness, and KF tracker Pd at 10 dB SNR. "
          "A broken pipeline fails here, not in production.",
          "pytest · ruff"),
         ("3", "🧠", "GPU Training & Experiment Tracking",
-         "The model trains on a Kubernetes GPU Job. Every run — different noise levels, "
-         "different architectures — is logged automatically. The team compares runs "
-         "side by side and selects the best before promoting.",
+         "The CNN+LSTM model trains on sequences of 8 Range-Doppler maps. The shared CNN "
+         "encodes each scan; the LSTM integrates track evidence across scans. Every run is "
+         "logged with T, architecture, and SNR as MLflow params.",
          "PyTorch · MLflow · Kubernetes"),
         ("4", "✅", "Quality Gate",
          "If the model does not reach 80% validation accuracy, the pipeline fails "
@@ -627,15 +644,14 @@ with tab_pipeline:
          "to the next stage.",
          "CI/CD gate · sys.exit(1)"),
         ("5", "📦", "ONNX Export & Registry",
-         "The approved model is exported to ONNX — a universal format accepted by FPGA "
-         "toolchains, embedded Linux runtimes, and GPU accelerators. The registry records "
-         "which version is in production and maintains a full audit trail.",
+         "The approved model is exported to ONNX with a fixed T=8 sequence length — "
+         "the LSTM Python for-loop is unrolled into T replicated op-graphs so no "
+         "special LSTM runtime is needed. Accepted by FPGA toolchains and embedded Linux.",
          "ONNX · MLflow Registry"),
         ("6", "🚀", "Edge Deployment",
-         "The 67 KB ONNX file deploys to the radar signal processor — no retraining, "
-         "no ML framework at runtime. It classifies one radar return in 0.035 ms on a "
-         "host CPU. The ONNX format is directly accepted by Xilinx Vitis AI for FPGA "
-         "compilation; that path is defined but outside the scope of this demonstrator.",
+         "The ONNX file deploys to the radar signal processor. One decision per 8 CPIs, "
+         "no ML framework at runtime. The ONNX format is directly accepted by Xilinx "
+         "Vitis AI for FPGA compilation; that path is defined but outside this demonstrator.",
          "ONNX Runtime · Xilinx Vitis AI (path defined)"),
     ]
 
