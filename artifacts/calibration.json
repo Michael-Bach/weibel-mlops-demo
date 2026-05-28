@@ -1,0 +1,7 @@
+{
+  "platt_coef": 3.4176005137847336,
+  "platt_intercept": -0.222924706518422,
+  "mean_calibration_error": 0.0018142682569360028,
+  "n_val_samples": 1000,
+  "note": "Apply: calibrated_prob = sigmoid(coef * raw_target_logit + intercept). Set operating threshold on calibrated_prob to enforce a Pfa target."
+}

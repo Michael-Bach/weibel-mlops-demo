@@ -8,15 +8,27 @@
 
 ---
 
-## Are you non-technical and just want to see it work?
+## Jump straight to the demo
 
-No setup needed. Click the badge above or go to **[weibel-mlops-demo.streamlit.app](https://weibel-mlops-demo.streamlit.app)** to open the live demo in your browser.
+Run locally:
+```bash
+git clone https://github.com/Michael-Bach/weibel-mlops-demo
+cd weibel-mlops-demo
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-The demo lets you:
-- Generate a radar target or clutter signal at any noise level and watch the model classify it in real time
-- Compare how target and clutter signals look in the time and frequency domain
-- See how classification accuracy degrades as noise increases
-- Walk through the full pipeline — from data generation to edge deployment — in plain language
+The Streamlit demo includes nine tabs:
+- **Classical Radar** — CA-CFAR signal chain and Kalman filter explained
+- **From CFAR to ML** — how the detection problem is reframed as a learning problem
+- **The Math** — radar equation, CFAR threshold, KF state equations, GRU update
+- **PPI Display** — interactive rotating radar scope with all three pipelines overlaid
+- **Algorithm Comparison** — Pd vs SNR, false track rate, confirmation latency, runtime
+- **ROC Curve** — cell-level ROC for CFAR, CNN, and ConvGRU at low SNR
+- **Strengths & Trade-offs** — operational role matrix and case for a combined system
+- **Live Radar** — real-time multi-target simulation (CFAR+KF vs ConvGRU+KF)
+- **Paper** — compiled IEEE-style PDF: *Deep Learning vs. CA-CFAR on Synthetic PPI Data*
 
 The rest of this README is for engineers who want to understand or run the pipeline themselves.
 

@@ -1,0 +1,24 @@
+{
+  "cfar_detect_per_sweep": {
+    "median_ms": 2.182,
+    "p95_ms": 2.193,
+    "min_ms": 2.12
+  },
+  "cfar_kf_per_sweep": {
+    "median_ms": 2.539,
+    "p95_ms": 3.141,
+    "min_ms": 2.357
+  },
+  "cnn_infer_full_10sweep": {
+    "median_ms": 0.795,
+    "p95_ms": 0.828,
+    "min_ms": 0.746
+  },
+  "cnn_kf_per_sweep": {
+    "median_ms": 2.876,
+    "p95_ms": 2.916,
+    "min_ms": 2.825
+  },
+  "n_reps": 50,
+  "grid": "180az \u00d7 64r"
+}
