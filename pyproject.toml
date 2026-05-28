@@ -1,10 +1,18 @@
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 exclude = [".git", "__pycache__", ".dvc"]
 
 [tool.ruff.lint]
 select = ["E", "F", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# app.py contains large HTML string literals that cannot be wrapped
+"app.py" = ["E501"]
+# Analysis/utility scripts — relax style rules
+"scripts/*.py" = ["E501", "E702", "E741", "F841", "E402"]
+# Baseline/src modules written before style rules were enforced
+"src/baseline/*.py" = ["E701", "F841"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

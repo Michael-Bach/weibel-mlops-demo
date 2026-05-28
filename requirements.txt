@@ -1,5 +1,5 @@
-numpy>=1.26.0
-onnxruntime>=1.18.0
-pyyaml>=6.0
-streamlit>=1.35.0
-plotly>=5.22.0
+numpy==2.4.6
+onnxruntime==1.26.0
+streamlit==1.57.0
+plotly==6.7.0
+PyYAML==6.0.3

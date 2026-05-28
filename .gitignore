@@ -8,13 +8,24 @@ dist/
 data/raw/
 data/processed/
 
-# Artifacts — ignore everything except the deployed ONNX model for Streamlit
+# Artifacts — keep models, figures and data the Streamlit app needs at runtime
 artifacts/*
 !artifacts/model.onnx
 !artifacts/model.onnx.data
+!artifacts/ppi_model.onnx
+!artifacts/recurrent_model.onnx
+!artifacts/comparison_snr.png
+!artifacts/paper_roc.png
+!artifacts/comparison_results.json
+!artifacts/comparison_runtime.json
+!artifacts/calibration.json
+!artifacts/ppi_metrics.json
+!artifacts/recurrent_metrics.json
+!artifacts/roc_comparison_1d.json
 
 # Experiment tracking
 mlruns/
+mlflow.db
 
 # Secrets
 .env
@@ -22,3 +33,4 @@ mlruns/
 # DVC internals (keep .dvc/ itself, ignore cache)
 .dvc/cache/
 .dvc/tmp/artifacts/
+*.aux
