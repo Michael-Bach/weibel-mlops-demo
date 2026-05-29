@@ -24,6 +24,13 @@ _MLFLOW_RUN = Path(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _hex_rgba(hex6: str, alpha: float) -> str:
+    """Convert a 6-digit hex color to rgba() string. Plotly rejects 8-digit hex."""
+    h = hex6.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def _read_metric(name: str):
     """Parse MLflow metric file → (steps, values)."""
     p = _MLFLOW_RUN / "metrics" / name
@@ -233,7 +240,7 @@ def render():
         fig_dag.add_shape(
             type="rect",
             x0=x - 0.52, y0=y - 0.52, x1=x + 0.52, y1=y + 0.52,
-            fillcolor=color + "22",
+            fillcolor=_hex_rgba(color, 0.13),
             line=dict(color=color, width=2),
         )
         fig_dag.add_annotation(
