@@ -118,17 +118,24 @@ _GRID = "rgba(128,128,128,0.2)"
 # ── Main render ───────────────────────────────────────────────────────────────
 
 def render():
-    st.markdown("## MLOps Pipeline: Test Range → XENTA Fleet")
+    st.markdown("## Proposed MLOps Pipeline: Test Range → XENTA Fleet")
     st.markdown(
-        "Weibel operates two distinct radar tiers. The high-precision instrumentation tier "
-        "acts as a **label factory** for the mass-produced XENTA operational fleet. "
-        "This tab shows how that data bridge works, how models are trained, validated, and "
-        "deployed, and how the fleet stays calibrated as operating environments evolve."
+        "Weibel already operates two distinct radar tiers with complementary capabilities. "
+        "This tab describes a pipeline architecture I designed to exploit that combination: "
+        "using the high-precision instrumentation tier as a **label factory** for the "
+        "mass-produced XENTA operational fleet. "
+        "The sections below cover the proposed data bridge, the training and validation pipeline "
+        "I built in this demo, and the deployment and monitoring loop the architecture would enable."
+    )
+    st.info(
+        "**Design proposal** — the hardware described here is Weibel's existing product line. "
+        "The ML pipeline, label fusion design, and monitoring architecture are my proposed additions. "
+        "The training runs and model artifacts in sections 3–4 are real: built and evaluated as part of this demo."
     )
 
     # ── 1. Two-tier hardware architecture ─────────────────────────────────────
     st.divider()
-    st.markdown("### 1 — Two-tier hardware architecture")
+    st.markdown("### 1 — The hardware opportunity: two existing tiers")
 
     col_t1, col_arrow, col_t2 = st.columns([10, 1, 10])
 
@@ -154,9 +161,9 @@ def render():
             language="text",
         )
         st.success(
-            "**This is the ground truth.** Every training label in the ML pipeline "
-            "comes from the instrumentation radar — not from the XENTA unit under test. "
-            "That separation is what makes instrument-error absorption possible."
+            "**The proposed role: ground truth provider.** In the proposed pipeline, every "
+            "training label would come from the instrumentation radar — not from the XENTA "
+            "unit under test. That separation is what makes instrument-error absorption possible."
         )
 
     with col_arrow:
@@ -186,14 +193,15 @@ def render():
             language="text",
         )
         st.info(
-            "**Embedded constraint:** ONNX model must run in <10 ms per sweep "
-            "on the ARM Cortex-A processor inside the XENTA signal processor — "
-            "no GPU. ConvGRU at 5 694 parameters achieves <1 ms on CPU (p50)."
+            "**Proposed deployment constraint:** the ONNX model would need to run in "
+            "<10 ms per sweep on an embedded ARM processor alongside the existing signal "
+            "processor — no GPU. The ConvGRU I trained achieves <1 ms per sweep on CPU (p50), "
+            "comfortably within that budget."
         )
 
     # ── 2. Data pipeline — DVC DAG ────────────────────────────────────────────
     st.divider()
-    st.markdown("### 2 — Data pipeline")
+    st.markdown("### 2 — Proposed data pipeline")
 
     # Node layout: (x, y, stage_name, description, hex_color)
     _nodes = [
@@ -279,17 +287,17 @@ def render():
         col_lf1, col_lf2 = st.columns([5, 6])
         with col_lf1:
             st.markdown(
-                "The instrumentation radar and the XENTA unit are co-located at the test range "
-                "but measure the scene from slightly different positions and in different coordinate "
-                "frames. Label fusion does three things:\n\n"
+                "The instrumentation radar and the XENTA unit would be co-located at the test range "
+                "but measure the same scene from slightly different positions and in different coordinate "
+                "frames. The label fusion step I designed would do three things:\n\n"
                 "1. **Timestamp alignment** — match each XENTA sweep to the nearest TSPI frame "
-                "(sub-millisecond tolerance; TSPI at µs precision is the master clock).\n\n"
+                "(sub-millisecond tolerance; TSPI at µs precision serves as the master clock).\n\n"
                 "2. **Coordinate transform** — project the TSPI 3D position (ECEF) into the XENTA's "
                 "native polar grid (azimuth bin, range bin), accounting for the offset between the "
                 "two antenna phase centres.\n\n"
                 "3. **Quality gate** — discard any frame where the instrumentation tracker lost lock "
-                "(`tracker_locked=False`) or where the target is outside the XENTA's coverage volume. "
-                "Only high-confidence labels enter training."
+                "(`tracker_locked=False`) or the target is outside the XENTA's coverage volume. "
+                "Only high-confidence labels would enter training."
             )
         with col_lf2:
             st.code(
@@ -322,11 +330,11 @@ def render():
                 language="python",
             )
         st.caption(
-            "The `unit_id` field enables unit-specific fine-tuning: "
+            "The `unit_id` field would enable unit-specific fine-tuning: "
             "train a base model on pooled data from all test sessions, "
-            "then fine-tune the final layer on data from that specific unit's serial number. "
-            "The result is a personalised ONNX artifact per unit that compensates for "
-            "that unit's individual hardware signature."
+            "then fine-tune the final layer on data tagged to that specific unit's serial number. "
+            "The result would be a personalised ONNX artifact per unit compensating for "
+            "that unit's individual hardware signature — something classical calibration cannot provide automatically."
         )
 
     # ── 3. Instrument error absorption ────────────────────────────────────────
@@ -517,13 +525,15 @@ def render():
 
     # ── 5. PSI drift monitoring ────────────────────────────────────────────────
     st.divider()
-    st.markdown("### 5 — PSI drift monitoring in deployment")
+    st.markdown("### 5 — Proposed drift monitoring in deployment")
     st.markdown(
-        "Each deployed XENTA unit periodically sends a sample of recent inference inputs "
-        "to the on-premise monitoring backend. The PSI (Population Stability Index) compares "
-        "the current signal distribution against the training reference. PSI > 0.20 triggers "
-        "a retraining review — typically a new test-range session in the new environment "
-        "or with the new drone type."
+        "In the proposed deployment architecture, each XENTA unit would periodically send "
+        "a sample of recent inference inputs to an on-premise monitoring backend. "
+        "PSI (Population Stability Index) would compare the current signal distribution "
+        "against the training reference — flagging environmental shifts or new drone types "
+        "before they degrade detection performance. PSI > 0.20 would trigger a retraining "
+        "review: typically a new test-range session in the new environment or with the new drone type. "
+        "The simulation below shows what that monitoring signal would look like."
     )
 
     col_sliders, col_gauge, col_dist = st.columns([2, 2, 4])
@@ -614,7 +624,7 @@ def render():
 
     # ── 6. Fleet deployment and continuous improvement ─────────────────────────
     st.divider()
-    st.markdown("### 6 — Fleet deployment and the data flywheel")
+    st.markdown("### 6 — Proposed fleet deployment and the data flywheel")
 
     col_f1, col_f2 = st.columns(2)
     with col_f1:
@@ -653,10 +663,10 @@ def render():
     with col_f2:
         st.markdown("**The data flywheel**")
         st.markdown(
-            "Each deployment cycle makes the next one better:\n\n"
+            "The key property of this architecture is that each deployment cycle would make the next one better:\n\n"
             "1. **More XENTA units deployed** → more diverse operating environments encountered\n"
-            "2. **PSI alerts** identify gaps in the training distribution automatically\n"
-            "3. **Test-range sessions** fill those gaps with labelled data\n"
+            "2. **PSI alerts** automatically identify gaps in the training distribution\n"
+            "3. **Test-range sessions** fill those gaps with labelled real-hardware data\n"
             "4. **Retraining on the expanded dataset** lowers the detection floor further\n"
             "5. **Better model → higher Pd, fewer false alarms** → more units deployed\n\n"
             "This compounding effect is unavailable to classical signal processing: "
@@ -682,11 +692,12 @@ def render():
         )
 
     st.success(
-        "**The complete loop:** Instrumentation radar provides precision labels → XENTA provides "
-        "hardware-distorted signals → model learns to correct for hardware signature → "
-        "ONNX deploys to fleet → PSI monitors distribution drift → drift triggers test-range collection → "
-        "pipeline retrains → improved model redeploys. "
-        "Each cycle, the detection floor lowers and the false-alarm rate drops."
+        "**The proposed loop:** Instrumentation radar provides precision labels → XENTA provides "
+        "hardware-distorted signals → model learns to correct for the hardware signature → "
+        "ONNX artifact deploys to fleet → PSI monitors distribution drift → drift triggers a "
+        "test-range collection session → pipeline retrains on the expanded dataset → improved model redeploys. "
+        "The compounding effect: each cycle, the detection floor would lower and the false-alarm rate would drop — "
+        "a capability that has no equivalent in a fixed classical signal processing architecture."
     )
 
     st.info(
