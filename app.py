@@ -36,7 +36,7 @@ st.title("📡 AI-Powered Radar Target Detection")
 st.markdown(
     "**This demo shows how a machine-learning system detects and tracks a moving target in radar "
     "data — automatically, and with greater reliability than traditional rule-based methods.** "
-    "A synthetic rotating radar generates realistic clutter; three detection algorithms compete "
+    "A synthetic rotating radar generates realistic clutter; classical and machine-learning detection algorithms compete "
     "on the same data so their performance can be compared directly."
 )
 
