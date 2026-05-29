@@ -252,3 +252,7 @@ the ML models are not flagging, it may indicate an out-of-distribution clutter e
 | ConvGRU + KF | 4.03 |
 | CNN + KF | **0.79** |
         """)
+
+    st.info(
+        "**Next tab →** The Math: the equations behind every algorithm shown in this demo."
+    )

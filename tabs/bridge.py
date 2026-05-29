@@ -92,7 +92,7 @@ def render():
             "✓ Matches real radar operation"
         )
 
-    with st.expander("**Transformer patch approach** — learned temporal attention", expanded=False):
+    with st.expander("**Transformer patch approach** — learned temporal attention", expanded=True):
         st.code(
             "# Divide each sweep into spatial patches (6×4 bins → 480 patches)\n"
             "patches = ppi.reshape(B, N_SW, 30, 6, 16, 4)\n"
@@ -166,6 +166,16 @@ def render():
             "MLflow with a local SQLite backend — no data needs to leave the network."
         )
 
+    st.success(
+        "**The label-quality compounding effect:** an ML detector is only as good as the "
+        "ground truth it was trained on. A radar with lower measurement error produces more "
+        "precise target positions in the training labels — and more precise labels produce a "
+        "better-calibrated detector. Sensor accuracy at the hardware level compounds directly "
+        "into model accuracy at the software level. This is the return on investing in "
+        "high-precision measurement: it does not just improve the radar's raw output, "
+        "it improves every ML system trained on that output."
+    )
+
     st.divider()
 
     # ── Architecture summary ──────────────────────────────────────────────────
@@ -217,6 +227,7 @@ def render():
         )
 
     st.info(
-        "**Next tab →** The Math: the CFAR threshold formula, KF equations, "
-        "ConvGRU forward pass, and ONNX export details."
+        "**Next tab →** Algorithm Comparison: measured detection performance across all "
+        "signal strengths, false alarm rates, and confirmation latencies. "
+        "*(The Math tab contains the full derivations — skip it if you don't need them.)*"
     )

@@ -25,6 +25,15 @@ def render():
         live_init()
     s = st.session_state["live"]
 
+    # ── Intro ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        "Multiple targets enter and cross the radar scan area at random speeds and signal strengths. "
+        "**Watch how quickly each system raises a confirmed alarm** — the classical CFAR pipeline "
+        "(white ✕) and the ConvGRU AI pipeline (magenta ◆) run side by side on identical data. "
+        "At low signal strength the AI track appears several antenna rotations before the classical "
+        "system reacts; the magenta heatmap shows the AI's growing confidence building sweep by sweep."
+    )
+
     # ── Controls ──────────────────────────────────────────────────────────────
     ctl1, ctl2, ctl3, ctl_gap = st.columns([1, 1, 1, 6])
     with ctl1:

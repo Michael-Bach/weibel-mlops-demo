@@ -115,3 +115,8 @@ def render():
         "The ConvGRU score is the final accumulated hidden-state value at the target cell — "
         "it builds confidence across sweeps, so its AUC rises sharply once SNR exceeds ~4 dB."
     )
+
+    st.info(
+        "**Next tab →** Strengths & Trade-offs: when to use each algorithm and why "
+        "combining them gives the best operational outcome."
+    )

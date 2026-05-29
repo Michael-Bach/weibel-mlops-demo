@@ -151,20 +151,29 @@ def render():
 
     st.divider()
 
-    # ── LRT / non-coherent integrator ─────────────────────────────────────────
-    st.markdown("### 4 — Likelihood Ratio Test (LRT) / Non-coherent Integrator")
-    st.markdown(
-        "The **Neyman-Pearson Lemma** states that the most powerful detector at a given false-alarm "
-        "rate is the one that computes the likelihood ratio between the two hypotheses and "
-        "thresholds it. For Rayleigh-distributed clutter the optimal single-sweep detector "
-        "reduces to a simple amplitude threshold — which is what CFAR approximates. "
-        "Across *N* sweeps, when the noise variance is known but the target amplitude is not "
-        "(the GLRT / composite-hypothesis case), the optimal statistic at low SNR is the "
-        "**square-law (energy) combiner**:"
-    )
-    col_lrt_txt, col_lrt_code = st.columns([3, 2])
-    with col_lrt_txt:
-        st.markdown(r"""
+    # ── LRT — optional deep-dive ──────────────────────────────────────────────
+    with st.expander(
+        "Advanced: Likelihood Ratio Test (LRT) — multi-sweep energy accumulation",
+        expanded=False,
+    ):
+        st.caption(
+            "A classical technique that improves on single-sweep CFAR by summing signal energy "
+            "across multiple rotations. Skip if you are following the ML story — return here to "
+            "understand why ML has an architecture advantage over all classical methods."
+        )
+        st.markdown("### Likelihood Ratio Test (LRT) / Non-coherent Integrator")
+        st.markdown(
+            "The **Neyman-Pearson Lemma** states that the most powerful detector at a given false-alarm "
+            "rate is the one that computes the likelihood ratio between the two hypotheses and "
+            "thresholds it. For Rayleigh-distributed clutter the optimal single-sweep detector "
+            "reduces to a simple amplitude threshold — which is what CFAR approximates. "
+            "Across *N* sweeps, when the noise variance is known but the target amplitude is not "
+            "(the GLRT / composite-hypothesis case), the optimal statistic at low SNR is the "
+            "**square-law (energy) combiner**:"
+        )
+        col_lrt_txt, col_lrt_code = st.columns([3, 2])
+        with col_lrt_txt:
+            st.markdown(r"""
 $$\Lambda(az,r) = \sum_{k=1}^{N} \left(\frac{x_k(az,r)}{\hat{\sigma}(r)}\right)^2$$
 
 where $\hat{\sigma}(r)$ is the range-dependent noise floor (10th-percentile amplitude).
@@ -176,46 +185,55 @@ where $\hat{\sigma}(r)$ is the range-dependent noise floor (10th-percentile ampl
 | **Optimal when** | Target stays in one cell across all N sweeps |
 | **Degrades when** | Target moves across cells (energy is spread over the trajectory) |
 """)
-    with col_lrt_code:
-        st.code(
-            "# radar/detection.py\n"
-            "def _lrt_score(ppi):          # ppi: (N, n_az, n_r)\n"
-            "    nf = percentile(ppi, 10,\n"
-            "             axis=(1,2),\n"
-            "             keepdims=True).clip(1e-6)\n"
-            "    normed = ppi / nf\n"
-            "    return (normed**2).sum(0) # (n_az, n_r)",
-            language="python",
+        with col_lrt_code:
+            st.code(
+                "# radar/detection.py\n"
+                "def _lrt_score(ppi):          # ppi: (N, n_az, n_r)\n"
+                "    nf = percentile(ppi, 10,\n"
+                "             axis=(1,2),\n"
+                "             keepdims=True).clip(1e-6)\n"
+                "    normed = ppi / nf\n"
+                "    return (normed**2).sum(0) # (n_az, n_r)",
+                language="python",
+            )
+        st.info(
+            "**Where LRT beats CFAR:** CFAR applies a threshold independently to each sweep and "
+            "discards the result. The LRT accumulates energy over all N sweeps at each fixed cell — "
+            "giving an SNR gain of roughly 10 log₁₀(N) dB for a stationary target. "
+            "For a target that barely clears the noise floor on any individual sweep, this "
+            "integration gain can be the difference between detection and a miss."
         )
-    st.info(
-        "**Where LRT beats CFAR:** CFAR applies a threshold independently to each sweep and "
-        "discards the result. The LRT accumulates energy over all N sweeps at each fixed cell — "
-        "giving an SNR gain of roughly 10 log₁₀(N) dB for a stationary target. "
-        "For a target that barely clears the noise floor on any individual sweep, this "
-        "integration gain can be the difference between detection and a miss."
-    )
-    st.warning(
-        "**Where LRT falls short:** it assumes the target sits in a single (az, r) cell for all "
-        "N sweeps. A moving target spreads its energy across several cells as it traverses the PPI, "
-        "so the score at any single cell only sees a fraction of the available energy. "
-        "DP-TBD (below) solves exactly this problem."
-    )
+        st.warning(
+            "**Where LRT falls short:** it assumes the target sits in a single (az, r) cell for all "
+            "N sweeps. A moving target spreads its energy across several cells as it traverses the PPI, "
+            "so the score at any single cell only sees a fraction of the available energy. "
+            "DP-TBD (below) solves exactly this problem."
+        )
 
     st.divider()
 
-    # ── DP-TBD ────────────────────────────────────────────────────────────────
-    st.markdown("### 5 — Dynamic-Programming Track-Before-Detect (DP-TBD)")
-    st.markdown(
-        "**Track-Before-Detect** reverses the classical pipeline: instead of thresholding each "
-        "sweep and then tracking the resulting detections, TBD accumulates *raw amplitude* across "
-        "sweeps along every plausible target trajectory, and only thresholds the final accumulated "
-        "score. This avoids discarding evidence from sweeps where the target was below the "
-        "single-sweep threshold."
-    )
-    col_tbd1, col_tbd2 = st.columns(2)
-    with col_tbd1:
-        st.markdown("**The DP recursion:**")
-        st.markdown(r"""
+    # ── DP-TBD — optional deep-dive ───────────────────────────────────────────
+    with st.expander(
+        "Advanced: Track-Before-Detect (DP-TBD) — following the target path",
+        expanded=False,
+    ):
+        st.caption(
+            "The most capable purely classical approach: accumulates evidence along the target's "
+            "trajectory rather than at a fixed cell. Understanding it makes clear where and why "
+            "the ML models outperform the entire classical family."
+        )
+        st.markdown("### Dynamic-Programming Track-Before-Detect (DP-TBD)")
+        st.markdown(
+            "**Track-Before-Detect** reverses the classical pipeline: instead of thresholding each "
+            "sweep and then tracking the resulting detections, TBD accumulates *raw amplitude* across "
+            "sweeps along every plausible target trajectory, and only thresholds the final accumulated "
+            "score. This avoids discarding evidence from sweeps where the target was below the "
+            "single-sweep threshold."
+        )
+        col_tbd1, col_tbd2 = st.columns(2)
+        with col_tbd1:
+            st.markdown("**The DP recursion:**")
+            st.markdown(r"""
 Initialise $S_0(az,r) = \tilde{x}_0(az,r)$ (normalised amplitude, sweep 0).
 
 For each subsequent sweep $k$:
@@ -230,36 +248,36 @@ After $N$ sweeps, declare a detection at any cell where $S_N(az,r) > \eta$.
 | Max angular motion $v_{az}$ | ±2 azimuth bins / sweep |
 | Complexity | $O(N \cdot (2v_{az}+1)(2v_r+1) \cdot N_{az} \cdot N_r)$ |
 """)
-    with col_tbd2:
-        st.code(
-            "# radar/detection.py\n"
-            "def _dp_tbd_score(ppi, max_vr=3, max_vaz=2):\n"
-            "    nf = percentile(ppi, 10, axis=(1,2),\n"
-            "                   keepdims=True).clip(1e-6)\n"
-            "    normed = ppi / nf           # (N, n_az, n_r)\n"
-            "    S = normed[0].copy()\n"
-            "    size = (2*max_vaz+1, 2*max_vr+1)\n"
-            "    for k in range(1, N):\n"
-            "        # max over velocity neighbourhood\n"
-            "        best = maximum_filter(S, size=size,\n"
-            "                   mode=('wrap','nearest'))\n"
-            "        S = normed[k] + best\n"
-            "    return S                    # (n_az, n_r)",
-            language="python",
+        with col_tbd2:
+            st.code(
+                "# radar/detection.py\n"
+                "def _dp_tbd_score(ppi, max_vr=3, max_vaz=2):\n"
+                "    nf = percentile(ppi, 10, axis=(1,2),\n"
+                "                   keepdims=True).clip(1e-6)\n"
+                "    normed = ppi / nf           # (N, n_az, n_r)\n"
+                "    S = normed[0].copy()\n"
+                "    size = (2*max_vaz+1, 2*max_vr+1)\n"
+                "    for k in range(1, N):\n"
+                "        # max over velocity neighbourhood\n"
+                "        best = maximum_filter(S, size=size,\n"
+                "                   mode=('wrap','nearest'))\n"
+                "        S = normed[k] + best\n"
+                "    return S                    # (n_az, n_r)",
+                language="python",
+            )
+        st.success(
+            "**Why DP-TBD wins at very low SNR:** by following the target's actual trajectory through "
+            "the cube, DP-TBD accumulates the full N-sweep integration gain *even for a moving target*. "
+            "The max-filter propagation step ensures that if a target has moved by up to ±3 bins "
+            "between sweeps, the score still traces it. "
+            "The tradeoff is velocity ambiguity: the neighbourhood size must bound the fastest "
+            "target you expect, and a larger neighbourhood increases both sensitivity and false-alarm rate."
         )
-    st.success(
-        "**Why DP-TBD wins at very low SNR:** by following the target's actual trajectory through "
-        "the cube, DP-TBD accumulates the full N-sweep integration gain *even for a moving target*. "
-        "The max-filter propagation step ensures that if a target has moved by up to ±3 bins "
-        "between sweeps, the score still traces it. "
-        "The tradeoff is velocity ambiguity: the neighbourhood size must bound the fastest "
-        "target you expect, and a larger neighbourhood increases both sensitivity and false-alarm rate."
-    )
 
     st.divider()
 
     # ── Limitations summary ───────────────────────────────────────────────────
-    st.markdown("### 6 — Operational limitations")
+    st.markdown("### Operational limitations")
     col_lim1, col_lim2, col_lim3 = st.columns(3)
     with col_lim1:
         st.markdown("**Low SNR performance**")

@@ -94,8 +94,10 @@ def render():
     # ── Pd vs SNR (pipeline comparison) ──────────────────────────────────────
     st.markdown("#### How often does each system detect the target — across all signal strengths?")
     st.caption(
-        "Solid lines = confirmed-track Pd (CFAR/CNN/GRU with Kalman filter). "
-        "Dash-dot lines = cell-level Pd (LRT/DP-TBD/Transformer without KF — threshold at matched Pfa). "
+        "**New to this demo? Focus on the three solid lines** — those are the main comparison "
+        "(CFAR in orange, CNN in blue, ConvGRU in purple). "
+        "The dash-dot lines (LRT, DP-TBD, Transformer) are additional classical and ML variants "
+        "covered in the Advanced sections of Tab 1 and Tab 2. "
         "Each point = 30 randomised trials at random target positions, speeds, and directions."
     )
     (snr_arr,
@@ -500,4 +502,9 @@ def render():
         "New labelled examples from the heterogeneous environment are collected, "
         "the model retrains, and after passing the accuracy gate and human review it is promoted to "
         "production. CFAR cannot undergo this process — its operating envelope is fixed at design time."
+    )
+
+    st.info(
+        "**Next tab →** ROC Curve: a different view of the same comparison — how each detector "
+        "trades off targets caught against false alarms generated."
     )

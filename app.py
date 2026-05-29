@@ -54,6 +54,14 @@ with st.expander("Key terms glossary"):
 | **Pfa** | Probability of False Alarm — the fraction of noise-only cells that are mistakenly flagged as targets |
 | **AUC** | Area Under Curve — a single number (0–1) summarising detector quality; 1.0 = perfect, 0.5 = random guessing |
 | **CNN** | Convolutional Neural Network — the AI model used here, trained to recognise target signatures across multiple radar sweeps |
+| **GRU / ConvGRU** | Gated Recurrent Unit — a neural network that processes one radar sweep at a time and maintains a running "memory" of what it has seen; ConvGRU applies this spatially across the full radar image |
+| **Transformer** | A neural network that uses "attention" to learn which radar sweeps are most informative at each location, without hand-crafting temporal features |
+| **LRT** | Likelihood Ratio Test — a classical detector that adds up signal energy across multiple sweeps to improve detection of faint, stationary targets |
+| **DP-TBD** | Dynamic-Programming Track-Before-Detect — a classical detector that traces the best possible target path through multiple sweeps before deciding if it is real |
+| **TSPI** | Time Space Position Information — the precise 3D position, velocity, and acceleration output of an instrumentation radar; used as ground-truth labels for ML training |
+| **PSI** | Population Stability Index — a metric that measures how much an incoming data distribution has shifted relative to the training reference; PSI > 0.20 triggers a retraining review |
+| **MFCW** | Multi-Frequency Continuous Wave — a high-precision radar waveform used in Weibel's instrumentation radars; enables simultaneous range and velocity measurement at sub-centimetre accuracy |
+| **OTA** | Over-The-Air — deploying a new model version to field units remotely, without physical access |
 """)
 
 if session is None:
@@ -65,16 +73,17 @@ if session is None:
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 
-from tabs import classical, bridge, math_tab, comparison, roc, tradeoffs, live_radar, paper  # noqa: E402
+from tabs import classical, bridge, math_tab, comparison, roc, tradeoffs, live_radar, paper, pipeline  # noqa: E402
 
-(tab_classical, tab_bridge, tab_math, tab_compare,
- tab_roc, tab_tradeoffs, tab_live, tab_paper) = st.tabs([
+(tab_classical, tab_bridge, tab_compare,
+ tab_roc, tab_tradeoffs, tab_pipeline, tab_math, tab_live, tab_paper) = st.tabs([
     "🔭  Classical Radar",
     "🤖  From CFAR to ML",
-    "📐  The Math",
     "📊  Algorithm Comparison",
     "📉  ROC Curve",
     "⚖️  Strengths & Trade-offs",
+    "🔁  MLOps Pipeline",
+    "📐  The Math",
     "📻  Live Radar",
     "📄  Paper",
 ])
@@ -85,9 +94,6 @@ with tab_classical:
 with tab_bridge:
     bridge.render()
 
-with tab_math:
-    math_tab.render()
-
 with tab_compare:
     comparison.render()
 
@@ -96,6 +102,12 @@ with tab_roc:
 
 with tab_tradeoffs:
     tradeoffs.render()
+
+with tab_pipeline:
+    pipeline.render()
+
+with tab_math:
+    math_tab.render()
 
 with tab_live:
     live_radar.render()
