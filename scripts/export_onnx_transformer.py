@@ -55,6 +55,7 @@ torch.onnx.export(
         "probability_map": {0: "batch"},
     },
     opset_version=17,
+    dynamo=False,   # legacy exporter: produces a single self-contained file
 )
 print(f"Exported: {out_path}")
 
