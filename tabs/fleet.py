@@ -288,6 +288,97 @@ def render():
 
     st.divider()
 
+    # ── Synthetic training and experience multiplication ───────────────────────
+    st.markdown("### Continuous synthetic training and experience multiplication")
+    st.markdown(
+        "Real field captures are scarce and expensive to label. "
+        "The proposed pipeline uses them as *seeds* for the physics-based simulator rather than "
+        "as the training set itself — turning a handful of real examples into thousands of "
+        "synthetic variations that cover conditions the field unit never happened to encounter."
+    )
+
+    col_s1, col_s2 = st.columns([5, 6])
+
+    with col_s1:
+        st.markdown("**Continuous background training**")
+        st.markdown(
+            "Even when no new real data arrives, the pipeline keeps training. "
+            "The synthetic generator runs continuously, producing fresh batches that sweep "
+            "the full SNR range (−20 to +40 dB), all aspect angles, random velocities, "
+            "and every clutter environment in the parameter library. "
+            "This prevents the model from drifting toward the narrow slice of conditions "
+            "it has seen in the most recent real captures."
+        )
+        st.markdown("**Experience replay**")
+        st.markdown(
+            "Every confirmed real detection is stored in the experience buffer with its "
+            "TSPI-derived label. Periodically, the training loop replays that buffer "
+            "alongside fresh synthetic data — the model is continuously reminded of "
+            "rare real-world events it would otherwise forget as the dataset grows."
+        )
+        st.markdown("**Synthetic multiplication of new captures**")
+        st.markdown(
+            "When a field unit encounters a drone type that is new to the training set, "
+            "a test-range session produces a small batch of labelled captures — "
+            "perhaps 20–50 sequences. The simulator extracts the key parameters from "
+            "those captures and generates thousands of synthetic variants, making the "
+            "model robust across conditions the test-range session did not cover."
+        )
+
+    with col_s2:
+        st.code(
+            "# When a new drone type is confirmed at the test range:\n"
+            "\n"
+            "# Step 1 — Extract physical signature from real captures\n"
+            "params = signature_extractor.fit(\n"
+            "    real_sequences,          # 20–50 labelled XENTA sequences\n"
+            "    instrumentation_tspi,    # ground-truth from range radar\n"
+            ")\n"
+            "# params now contains:\n"
+            "#   rotor_freq_hz     = 84.3   # blade-passing frequency\n"
+            "#   rcs_mean_dbsm     = -12.1  # radar cross-section\n"
+            "#   velocity_max_ms   = 28.0   # max speed observed\n"
+            "#   micro_doppler_bw  = 320    # Hz, rotor spread\n"
+            "\n"
+            "# Step 2 — Multiply synthetically\n"
+            "synthetic_batch = generator.sample(\n"
+            "    drone_params  = params,\n"
+            "    n_sequences   = 2000,      # 40–100× the real captures\n"
+            "    snr_range_db  = (-20, 40), # full operational envelope\n"
+            "    aspect_angles = 'uniform', # all directions\n"
+            "    clutter_types = ['rayleigh', 'sea-state-3', 'urban'],\n"
+            "    velocity_dist = 'uniform', # draw v from [0, v_max]\n"
+            "    seed          = run_id,    # reproducible via DVC\n"
+            ")\n"
+            "\n"
+            "# Step 3 — Mix with existing dataset and retrain\n"
+            "dataset = existing_data + real_captures + synthetic_batch\n"
+            "dvc repro  # pipeline picks up the new data automatically",
+            language="python",
+        )
+        st.caption(
+            "The simulator uses the same physics model as the base synthetic pipeline "
+            "(Rayleigh clutter, Gaussian beam, range-gate pulse) but with the new drone's "
+            "measured RCS and micro-Doppler parameters substituted in. "
+            "The result: a model that generalises to the new airframe across all SNR, "
+            "aspect, and clutter conditions — from 20–50 real captures."
+        )
+
+    st.markdown("**What gets varied in the synthetic expansion**")
+    st.markdown("""
+| Parameter | Range | Why it matters |
+|---|---|---|
+| **SNR** | −20 to +40 dB | Model must detect at long range (low SNR) and close range (high SNR) |
+| **Aspect angle** | 0–360° | RCS and micro-Doppler vary strongly with viewing angle |
+| **Radial velocity** | 0 to v_max | Hovering drone vs. fast-transit; different Doppler signature |
+| **Clutter type** | Rayleigh / sea / urban / terrain | Each environment the fleet operates in |
+| **Range** | 10–480 m | Near targets saturate ADC; far targets are near noise floor |
+| **Trajectory shape** | Linear / curved / hovering | Temporal evolution of position in PPI sequence |
+| **SNR jitter** | ±3 dB per sweep | Realistic fluctuation from aspect and scintillation |
+    """)
+
+    st.divider()
+
     # ── Live event feed ───────────────────────────────────────────────────────
     st.markdown("### Simulated activity feed")
     st.caption("A sample of what the monitoring backend would log during normal fleet operation.")
