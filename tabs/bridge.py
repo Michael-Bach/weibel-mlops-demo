@@ -92,6 +92,29 @@ def render():
             "✓ Matches real radar operation"
         )
 
+    with st.expander("**Transformer patch approach** — learned temporal attention", expanded=False):
+        st.code(
+            "# Divide each sweep into spatial patches (6×4 bins → 480 patches)\n"
+            "patches = ppi.reshape(B, N_SW, 30, 6, 16, 4)\n"
+            "tokens  = patch_embed(patches)      # (B*480, N_SW, d_model=32)\n"
+            "tokens += sweep_pos_encoding        # which sweep is this token?\n"
+            "\n"
+            "# Self-attention across 10 sweeps at every patch\n"
+            "out = transformer_encoder(tokens)   # (B*480, N_SW, d_model)\n"
+            "out = out.mean(dim=1)               # aggregate sweep tokens\n"
+            "prob_map = decode(out).reshape(B, 180, 64)  # back to spatial\n"
+            "\n"
+            "# Key difference from CNN: the model LEARNS which sweeps matter\n"
+            "# at each location — no fixed max/mean/std",
+            language="python",
+        )
+        st.markdown(
+            "✓ Learns temporal aggregation — no fixed feature engineering  \n"
+            "✓ Attention weights interpretable: which sweeps drove this detection?  \n"
+            "✗ Batch only — same 10-sweep window requirement as CNN  \n"
+            "✗ ~20 k parameters, patch-level (6×4 bin) output resolution"
+        )
+
     st.divider()
 
     # ── Training data ─────────────────────────────────────────────────────────

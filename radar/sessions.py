@@ -48,3 +48,9 @@ def load_cnn_session():
 def load_gru_session():
     p = Path("artifacts/recurrent_model.onnx")
     return ort.InferenceSession(str(p)) if p.exists() else None
+
+
+@st.cache_resource
+def load_transformer_session():
+    p = Path("artifacts/transformer_model.onnx")
+    return ort.InferenceSession(str(p)) if p.exists() else None

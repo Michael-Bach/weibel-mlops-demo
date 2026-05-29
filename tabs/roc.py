@@ -57,12 +57,13 @@ def render():
             "At high SNR the ML curve should reach the top-left corner first."
         )
 
-    ml_s, cf_s, gru_s, lrt_s, tbd_s, lbs = _roc_data(roc_snr, _v=10)
+    ml_s, cf_s, gru_s, lrt_s, tbd_s, tf_s, lbs = _roc_data(roc_snr, _v=11)
     ml_f,  ml_t  = _roc(ml_s,  lbs)
     cf_f,  cf_t  = _roc(cf_s,  lbs)
     gru_f, gru_t = _roc(gru_s, lbs)
     lrt_f, lrt_t = _roc(lrt_s, lbs)
     tbd_f, tbd_t = _roc(tbd_s, lbs)
+    tf_f,  tf_t  = _roc(tf_s,  lbs)
 
     _ROC_GRID = "rgba(100,100,100,0.15)"
     fig_r = go.Figure()
@@ -83,6 +84,9 @@ def render():
     fig_r.add_trace(go.Scatter(x=tbd_f, y=tbd_t, mode="lines",
                                name=f"DP-TBD  AUC {_auc(tbd_f, tbd_t):.3f}",
                                line=dict(color="#e74c3c", width=2.0, dash="dashdot")))
+    fig_r.add_trace(go.Scatter(x=tf_f, y=tf_t, mode="lines",
+                               name=f"Transformer  AUC {_auc(tf_f, tf_t):.3f}",
+                               line=dict(color="#f39c12", width=2.5)))
     fig_r.update_layout(
         height=440,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -96,12 +100,13 @@ def render():
     with col_p:
         st.plotly_chart(fig_r, use_container_width=True)
 
-    r1, r2, r3, r4, r5 = st.columns(5)
+    r1, r2, r3, r4, r5, r6 = st.columns(6)
     r1.metric("CNN AUC",           f"{_auc(ml_f,  ml_t):.3f}",  _auc_label(_auc(ml_f,  ml_t)))
-    r2.metric("ConvGRU AUC",       f"{_auc(gru_f, gru_t):.3f}", _auc_label(_auc(gru_f, gru_t)))
-    r3.metric("CA-CFAR AUC",       f"{_auc(cf_f,  cf_t):.3f}",  _auc_label(_auc(cf_f,  cf_t)))
-    r4.metric("LRT (non-coh.) AUC",f"{_auc(lrt_f, lrt_t):.3f}", _auc_label(_auc(lrt_f, lrt_t)))
-    r5.metric("DP-TBD AUC",        f"{_auc(tbd_f, tbd_t):.3f}", _auc_label(_auc(tbd_f, tbd_t)))
+    r2.metric("Transformer AUC",   f"{_auc(tf_f,  tf_t):.3f}",  _auc_label(_auc(tf_f,  tf_t)))
+    r3.metric("ConvGRU AUC",       f"{_auc(gru_f, gru_t):.3f}", _auc_label(_auc(gru_f, gru_t)))
+    r4.metric("CA-CFAR AUC",       f"{_auc(cf_f,  cf_t):.3f}",  _auc_label(_auc(cf_f,  cf_t)))
+    r5.metric("LRT (non-coh.) AUC",f"{_auc(lrt_f, lrt_t):.3f}", _auc_label(_auc(lrt_f, lrt_t)))
+    r6.metric("DP-TBD AUC",        f"{_auc(tbd_f, tbd_t):.3f}", _auc_label(_auc(tbd_f, tbd_t)))
     st.caption(
         "**Reading the ROC:** left side = conservative (low false alarms, some targets missed). "
         "Right side = aggressive (catch more targets, more false alarms). "

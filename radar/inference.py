@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import streamlit as st
 
-from radar.sessions import N_SW, N_AZ, N_RANGE, load_cnn_session, load_gru_session
+from radar.sessions import N_SW, N_AZ, N_RANGE, load_cnn_session, load_gru_session, load_transformer_session
 from src.data.ppi_generator import temporal_features
 
 
@@ -106,6 +106,32 @@ def _gru_seq(ppi_seq: np.ndarray, positions: list) -> tuple[list[float], list[np
         heatmap_history.append(prob_map.copy())
 
     return conf_history, heatmap_history
+
+
+def _tf_map(ppi_seq: np.ndarray, n_sw: int) -> np.ndarray:
+    """
+    Transformer inference on the raw amplitude stack.
+
+    Unlike the CNN (which uses pre-computed max/mean/std), the transformer
+    receives the noise-normalised sweep stack directly and attends across
+    sweeps at each spatial patch to learn what temporal patterns indicate a target.
+
+    Same zero-padding strategy as _ml_map so partial sequences stay in-distribution.
+    """
+    session = load_transformer_session()
+    if session is None:
+        return np.zeros((N_AZ, N_RANGE), dtype=np.float32)
+
+    padded = np.zeros((N_SW, N_AZ, N_RANGE), dtype=np.float32)
+    padded[N_SW - n_sw:] = ppi_seq[:n_sw]
+
+    # Noise-floor normalisation: per-range-bin estimate (matches training)
+    noise_fl = np.percentile(padded, 10, axis=(0, 1), keepdims=True).clip(1e-3)
+    stack    = (padded / noise_fl).clip(0, 30).astype(np.float32)
+
+    inp = stack[np.newaxis]   # (1, N_SW, N_AZ, N_RANGE)
+    out = session.run(None, {"ppi_stack": inp})[0][0]   # (N_AZ, N_RANGE)
+    return out
 
 
 def _cnn_peaks(ml_out: np.ndarray, threshold: float,

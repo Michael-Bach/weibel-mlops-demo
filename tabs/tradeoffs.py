@@ -114,6 +114,43 @@ def render():
 
         st.info("**Best role:** early-warning and long-range surveillance where low SNR sensitivity and streaming latency are the primary requirements.")
 
+    with col_cfar:   # reuse the 4th column slot
+        pass
+
+    # ── Transformer card ───────────────────────────────────────────────────────
+    st.divider()
+    col_tf, col_gap = st.columns([2, 1])
+    with col_tf:
+        st.markdown("### 🟠 Patch Temporal Transformer")
+        st.markdown("**Learned temporal attention — no hand-engineered features**")
+        st.divider()
+        col_tf1, col_tf2 = st.columns(2)
+        with col_tf1:
+            st.markdown("#### ✅ Strengths")
+            st.markdown("""
+- **No feature engineering** — receives the raw 10-sweep amplitude stack; attention learns
+  which sweeps matter at each spatial location, replacing the fixed max/mean/std.
+- **Interpretable attention weights** — the (10×10) attention matrix per patch shows
+  exactly which sweep pairs the model uses for detection.
+- **Comparable AUC to CNN** — achieves similar cell-level ROC performance with a
+  different inductive bias (learned vs. fixed temporal aggregation).
+- **~20 k parameters** — same order as the CNN, easily deployable.
+            """)
+        with col_tf2:
+            st.markdown("#### ❌ Weaknesses")
+            st.markdown("""
+- **Batch only** — like the CNN, requires a full 10-sweep window before inference;
+  not suitable for streaming.
+- **Patch-level resolution** — output is decoded at 6×4 bin patch granularity
+  (30×16 patches), slightly coarser than the per-cell CNN output.
+- **Needs more training data** — transformers are more data-hungry than CNNs;
+  the current model was trained on the same 800-sequence set, which may under-utilise
+  the architecture's capacity.
+- **Fixed context window** — same sliding-window limitation as the CNN for
+  continuous rotation deployment.
+            """)
+        st.info("**Best role:** offline re-evaluation or second-opinion pass where interpretable attention maps help operators understand why a detection was flagged.")
+
     st.divider()
 
     # ── Operational role matrix ────────────────────────────────────────────────
@@ -124,16 +161,16 @@ def render():
     )
 
     st.markdown("""
-| Requirement | CA-CFAR+KF | CNN+KF | ConvGRU+KF |
-|---|:---:|:---:|:---:|
-| **Early warning (react before 5 sweeps)** | 🔴 Slow | 🟡 Moderate | 🟢 Best |
-| **Low-SNR detection (0–6 dB)** | 🔴 Poor | 🟡 Good | 🟢 Best |
-| **False-alarm-limited environment** | 🟡 Baseline | 🟢 Best | 🟡 Comparable to CFAR |
-| **Multi-target tracking** | 🟢 Yes | 🔴 Conflicts targets | 🟢 Yes |
-| **Zero-data deployment** | 🟢 No data needed | 🔴 Needs training | 🔴 Needs training |
-| **Explainability / certification** | 🟢 Fully transparent | 🟡 Interpretable map | 🟡 Interpretable map |
-| **Embedded / hard real-time** | 🟢 2.2 ms/sweep | 🟢 0.8 ms/batch | 🟢 <1 ms/sweep |
-| **Heterogeneous clutter** | 🔴 Breaks at edges | 🟢 Learned robustness | 🟡 Needs retraining |
+| Requirement | CA-CFAR+KF | CNN+KF | ConvGRU+KF | Transformer |
+|---|:---:|:---:|:---:|:---:|
+| **Early warning (react before 5 sweeps)** | 🔴 Slow | 🟡 Moderate | 🟢 Best | 🟡 Moderate |
+| **Low-SNR detection (0–6 dB)** | 🔴 Poor | 🟡 Good | 🟢 Best | 🟡 Good |
+| **False-alarm-limited environment** | 🟡 Baseline | 🟢 Best | 🟡 Comparable to CFAR | 🟢 Good |
+| **Multi-target tracking** | 🟢 Yes | 🔴 Conflicts targets | 🟢 Yes | 🔴 Conflicts targets |
+| **Zero-data deployment** | 🟢 No data needed | 🔴 Needs training | 🔴 Needs training | 🔴 Needs training |
+| **Explainability / certification** | 🟢 Fully transparent | 🟡 Interpretable map | 🟡 Interpretable map | 🟢 Attention weights |
+| **Embedded / hard real-time** | 🟢 2.2 ms/sweep | 🟢 0.8 ms/batch | 🟢 <1 ms/sweep | 🟡 ~2 ms/batch |
+| **Heterogeneous clutter** | 🔴 Breaks at edges | 🟢 Learned robustness | 🟡 Needs retraining | 🟢 Learned robustness |
     """)
 
     st.divider()
