@@ -435,6 +435,7 @@ def _triad_fig() -> go.Figure:
 
 def render():
     st.markdown("## Proposed: Continuous Fleet Learning")
+    st.caption("*Three data sources feed one training hub — every new deployment makes the whole fleet smarter.*")
     st.markdown(
         "The proposed training pipeline draws from three complementary data sources simultaneously. "
         "No single source is sufficient on its own: synthetic data covers the full parameter space "

@@ -119,6 +119,7 @@ _GRID = "rgba(128,128,128,0.2)"
 
 def render():
     st.markdown("## Proposed MLOps Pipeline: Test Range → XENTA Fleet")
+    st.caption("*The proposed MLOps machinery behind the Fleet tab — from instrumentation labels to ONNX deployment.*")
     st.markdown(
         "Weibel already operates two distinct radar tiers with complementary capabilities. "
         "This tab describes a pipeline architecture I designed to exploit that combination: "

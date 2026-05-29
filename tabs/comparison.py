@@ -22,6 +22,7 @@ def render():
     cfar_pfa, cnn_thr, cfar_kf_ftr, cnn_kf_ftr, gru_thr, gru_kf_ftr = _calibrate_pfa()
 
     # ── Operational headline ──────────────────────────────────────────────────
+    st.caption("*Drag the SNR slider — the AI pipeline detects 4–6 dB lower than CFAR at the same false-alarm rate.*")
     st.markdown("### Does the AI system outperform classical radar detection?")
     _fa_ratio_gru = cfar_kf_ftr / max(gru_kf_ftr, 0.01)
     _fa_ratio_cnn = cfar_kf_ftr / max(cnn_kf_ftr, 0.01)

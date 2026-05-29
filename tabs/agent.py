@@ -568,6 +568,29 @@ def _render_impl():
         fleet = _PRESETS[selected]["fleet"]
         description = _PRESETS[selected]["description"]
 
+    # ── Run button — above the fold ───────────────────────────────────────────
+    system = st.session_state.get("agent_system", _DEFAULT_SYSTEM)
+    run_col, clear_col, _ = st.columns([1, 1, 5])
+    run_btn   = run_col.button("▶  Run Agent", type="primary", key="agent_run_btn")
+    clear_btn = clear_col.button("✕  Clear", key="agent_clear_btn")
+
+    if clear_btn:
+        for k in ("agent_trace", "agent_messages", "agent_followups", "agent_actions"):
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    if run_btn:
+        for k in ("agent_trace", "agent_messages", "agent_followups", "agent_actions"):
+            st.session_state.pop(k, None)
+        with st.spinner("Agent reasoning…"):
+            trace, messages = _run_agent(fleet, description, api_key, system)
+        st.session_state["agent_trace"]    = trace
+        st.session_state["agent_messages"] = messages
+        st.session_state["agent_followups"] = []
+        st.rerun()
+
+    st.divider()
+
     # ── 2. Fleet snapshot ─────────────────────────────────────────────────────
     st.markdown("### 2 — Fleet snapshot")
     status_icon = {"ok": "🟢", "warn": "🟡", "alert": "🔴"}
@@ -603,7 +626,7 @@ def _render_impl():
 
     # ── Agent instructions ────────────────────────────────────────────────────
     with st.expander("📝 Edit agent instructions (system prompt)"):
-        system = st.text_area(
+        system_edit = st.text_area(
             "System prompt",
             value=st.session_state.get("agent_system", _DEFAULT_SYSTEM),
             height=260,
@@ -612,43 +635,21 @@ def _render_impl():
         )
         col_save, col_reset, _ = st.columns([1, 1, 4])
         if col_save.button("Save", key="sys_save"):
-            st.session_state["agent_system"] = system
-            st.session_state.pop("agent_trace", None)
-            st.session_state.pop("agent_messages", None)
-            st.session_state.pop("agent_followups", None)
+            st.session_state["agent_system"] = system_edit
+            for k in ("agent_trace", "agent_messages", "agent_followups"):
+                st.session_state.pop(k, None)
             st.success("Saved — next run will use the updated instructions.")
         if col_reset.button("Reset", key="sys_reset"):
             st.session_state["agent_system"] = _DEFAULT_SYSTEM
-            st.session_state.pop("agent_trace", None)
-            st.session_state.pop("agent_messages", None)
-            st.session_state.pop("agent_followups", None)
+            for k in ("agent_trace", "agent_messages", "agent_followups"):
+                st.session_state.pop(k, None)
             st.rerun()
-    system = st.session_state.get("agent_system", _DEFAULT_SYSTEM)
 
     st.divider()
 
-    # ── 3. Agent trace ────────────────────────────────────────────────────────
+    # ── 3. Agent reasoning trace ──────────────────────────────────────────────
     st.markdown("### 3 — Agent reasoning trace")
     st.caption("Watch the agent call tools, observe results, and build its recommendation.")
-
-    run_col, clear_col, _ = st.columns([1, 1, 5])
-    run_btn   = run_col.button("▶  Run Agent", type="primary", key="agent_run_btn")
-    clear_btn = clear_col.button("✕  Clear", key="agent_clear_btn")
-
-    if clear_btn:
-        for k in ("agent_trace", "agent_messages", "agent_followups"):
-            st.session_state.pop(k, None)
-        st.rerun()
-
-    if run_btn:
-        for k in ("agent_trace", "agent_messages", "agent_followups", "agent_actions"):
-            st.session_state.pop(k, None)
-        with st.spinner("Agent reasoning…"):
-            trace, messages = _run_agent(fleet, description, api_key, system)
-        st.session_state["agent_trace"]    = trace
-        st.session_state["agent_messages"] = messages
-        st.session_state["agent_followups"] = []
-        st.rerun()
 
     if "agent_trace" in st.session_state:
         _render_events(st.session_state["agent_trace"])

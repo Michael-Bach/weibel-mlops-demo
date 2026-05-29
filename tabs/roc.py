@@ -19,6 +19,7 @@ def _auc_label(val: float) -> str:
 
 
 def render():
+    st.caption("*Drag the SNR slider to see every detector's detection-vs-false-alarm curve — closer to the top-left corner is better.*")
     st.markdown("### ROC curves: how reliably does each detector separate signal from noise?")
     st.markdown(
         "A ROC curve answers: *if I set the detector sensitivity to a given level, "

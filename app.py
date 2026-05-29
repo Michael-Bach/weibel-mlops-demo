@@ -75,18 +75,18 @@ if session is None:
 
 from tabs import classical, bridge, math_tab, comparison, roc, tradeoffs, live_radar, paper, pipeline, fleet, agent  # noqa: E402
 
-(tab_classical, tab_bridge, tab_compare,
- tab_roc, tab_tradeoffs, tab_fleet, tab_agent, tab_pipeline, tab_math, tab_live, tab_paper) = st.tabs([
+(tab_classical, tab_bridge, tab_compare, tab_live,
+ tab_roc, tab_tradeoffs, tab_fleet, tab_agent, tab_pipeline, tab_math, tab_paper) = st.tabs([
     "🔭 Classical",
     "🤖 CFAR → ML",
     "📊 Comparison",
+    "📻 Live",
     "📉 ROC",
     "⚖️ Trade-offs",
     "🛰 Fleet",
     "🧠 Agent",
     "🔁 Pipeline",
     "📐 Math",
-    "📻 Live",
     "📄 Paper",
 ])
 
@@ -98,6 +98,9 @@ with tab_bridge:
 
 with tab_compare:
     comparison.render()
+
+with tab_live:
+    live_radar.render()
 
 with tab_roc:
     roc.render()
@@ -116,9 +119,6 @@ with tab_pipeline:
 
 with tab_math:
     math_tab.render()
-
-with tab_live:
-    live_radar.render()
 
 with tab_paper:
     paper.render()

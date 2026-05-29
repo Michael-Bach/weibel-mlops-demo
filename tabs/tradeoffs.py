@@ -8,6 +8,7 @@ import streamlit as st
 
 def render():
     st.markdown("## Algorithm Strengths, Weaknesses & Operational Trade-offs")
+    st.caption("*Each algorithm wins on different metrics — the case for combining all three into one layered system.*")
     st.markdown(
         "No single detector wins on every metric. "
         "This tab maps each algorithm's measured characteristics to operational radar roles — "

@@ -7,6 +7,7 @@ import streamlit as st
 
 def render():
     st.markdown("## From CFAR to ML: reframing radar detection as a learning problem")
+    st.caption("*See how the problem is reframed as a classification task, what the model sees, and why the pipeline matters.*")
     st.markdown(
         "CFAR is a hand-crafted statistical decision rule. The ML alternative replaces the "
         "hand-crafted rule with a *learned* one — trained on examples of what targets and "

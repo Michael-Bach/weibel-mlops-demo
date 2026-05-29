@@ -7,6 +7,7 @@ import streamlit as st
 
 def render():
     st.markdown("## Classical radar detection: CA-CFAR + Kalman tracker")
+    st.caption("*Understand the baseline — and exactly where CFAR breaks before the ML case is made.*")
     st.markdown(
         "Before introducing machine learning it is useful to understand the standard pipeline "
         "it replaces — and why that pipeline is difficult to improve without changing the "

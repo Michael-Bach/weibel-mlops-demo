@@ -26,6 +26,7 @@ def render():
     s = st.session_state["live"]
 
     # ── Intro ─────────────────────────────────────────────────────────────────
+    st.caption("*Click ▶ Start — watch the AI track appear before CFAR reacts, especially at low signal strength.*")
     st.markdown(
         "Multiple targets enter and cross the radar scan area at random speeds and signal strengths. "
         "**Watch how quickly each system raises a confirmed alarm** — the classical CFAR pipeline "
