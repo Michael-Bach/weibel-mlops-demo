@@ -29,6 +29,7 @@ mlflow.db
 
 # Secrets
 .env
+.streamlit/secrets.toml
 
 # DVC internals (keep .dvc/ itself, ignore cache)
 .dvc/cache/

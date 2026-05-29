@@ -4,3 +4,4 @@ onnxruntime==1.26.0
 streamlit==1.57.0
 plotly==6.7.0
 PyYAML==6.0.3
+anthropic>=0.100.0
