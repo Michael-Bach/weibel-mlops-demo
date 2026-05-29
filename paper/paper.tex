@@ -246,33 +246,45 @@ Performance metrics were evaluated over 30 Monte Carlo trials per SNR point:
 
 \subsection{Detection Probability vs.\ SNR}
 
-Table~\ref{tab:pd} reports $P_d$ at five representative SNR operating points
-for the three KF-based pipelines (CA-CFAR, CNN, ConvGRU).
-LRT and DP-TBD are evaluated as standalone cell-level detectors (no KF);
-their track-level $P_d$ would follow from appending a KF, but that
-extension is left for future work.
-The ConvGRU achieves 100\,\% detection at SNR\,=\,4\,dB, roughly 4--6\,dB
-below the CFAR crossover, due to temporal integration in the recurrent
-hidden state.
-The CNN matches the GRU at high SNR but trails at low SNR because its
-temporal statistics (max/mean/std) are less discriminative than recurrent
-accumulation at sparse return rates.
-Figure~\ref{fig:snr} shows the full $P_d$--SNR curves for the three
-KF-based pipelines.
+Table~\ref{tab:pd} and Figure~\ref{fig:snr} report $P_d$ for all five
+detectors across the SNR range.
+LRT and DP-TBD are evaluated as cell-level standalone detectors (no KF),
+with thresholds calibrated to CFAR's $P_{fa} = 4.66\,\%$.
+Their $P_d$ remains near the false-alarm floor ($\approx$\,5\,\%) at all
+SNR levels, even at 40\,dB where CFAR+KF achieves 100\,\%.
+This is a direct consequence of integration loss:
+a target traversing 1.5\,bins/sweep covers $\approx$\,15 range bins in
+10 sweeps, so each cell accumulates the target for at most 1--2 sweeps
+while 8--9 sweeps of clutter energy are added.
+The result is that LRT and DP-TBD cannot distinguish a high-SNR moving
+target from noise at any fixed cell --- a conclusion already indicated by
+their near-chance ROC AUC (Table~\ref{tab:auc}, Section~\ref{sec:results_roc}).
+In contrast, the CNN's temporal features (max/mean/std across the full
+sequence) are computed \emph{per cell} and directly detect the target's
+pass-through regardless of which specific sweep it occurred in, giving a
+30-point AUC advantage.
+The ConvGRU achieves 100\,\% $P_d$ at SNR\,=\,4\,dB through recurrent
+accumulation of the per-sweep signal, 4--6\,dB below the CFAR knee.
 
 \begin{table}[h]
-\caption{Probability of Detection vs.\ SNR (30 trials each)}
+\caption{Probability of Detection vs.\ SNR (30 trials each).
+         CFAR+KF, CNN+KF, GRU+KF: confirmed-track $P_d$ (KF pipeline).
+         LRT, DP-TBD: cell-level $P_d$ at calibrated threshold
+         (oracle-path max, matched $P_{fa}$); no KF stage.
+         Low LRT/TBD values reflect integration loss from target motion ---
+         a moving target occupies each cell for only 1--2 of the 10 sweeps,
+         so 8--9 clutter sweeps dominate the accumulated score.}
 \label{tab:pd}
 \centering
-\begin{tabular}{cccc}
+\begin{tabular}{cccccc}
 \toprule
-SNR (dB) & CFAR+KF & CNN+KF & GRU+KF \\
+SNR (dB) & CFAR+KF & CNN+KF & GRU+KF & LRT & DP-TBD \\
 \midrule
-$-4$ & 26.7\,\% & 20.0\,\% & \textbf{43.3\,\%} \\
-$0$  & 6.7\,\%  & 36.7\,\% & \textbf{73.3\,\%} \\
-$4$  & 40.0\,\% & 76.7\,\% & \textbf{100\,\%}  \\
-$8$  & 43.3\,\% & 96.7\,\% & \textbf{100\,\%}  \\
-$12$ & 100\,\%  & 100\,\%  & 100\,\%           \\
+$-4$ & 26.7\,\% & 20.0\,\% & \textbf{43.3\,\%} & $\approx P_{fa}$ & $\approx P_{fa}$ \\
+$0$  & 6.7\,\%  & 36.7\,\% & \textbf{73.3\,\%} & 3.3\,\%          & 6.7\,\%          \\
+$4$  & 40.0\,\% & 76.7\,\% & \textbf{100\,\%}  & $\approx P_{fa}$ & $\approx P_{fa}$ \\
+$8$  & 43.3\,\% & 96.7\,\% & \textbf{100\,\%}  & $\approx P_{fa}$ & $\approx P_{fa}$ \\
+$12$ & 100\,\%  & 100\,\%  & 100\,\%           & 3.3\,\%          & 3.3\,\%          \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -319,7 +331,12 @@ This is why a learned detector with only 19\,000 parameters achieves a
 \begin{figure}[h]
   \centering
   \includegraphics[width=\columnwidth]{comparison_snr.png}
-  \caption{Probability of detection vs.\ SNR for all three pipelines.
+  \caption{Probability of detection vs.\ SNR for all five detectors
+           (30 trials/point).
+           KF pipelines (solid/dashed): confirmed-track $P_d$.
+           LRT and DP-TBD (dash-dot): cell-level $P_d$ at matched $P_{fa}$.
+           Both classical integrators remain near the false-alarm floor at
+           all SNR levels due to integration loss from target motion.
            The ConvGRU+KF (magenta) reaches 100\,\% at 4\,dB, roughly
            4--6\,dB below the CFAR knee.}
   \label{fig:snr}
