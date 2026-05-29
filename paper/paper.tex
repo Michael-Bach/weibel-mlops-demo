@@ -49,7 +49,7 @@ The CNN achieves AUC 0.784 at 0\,dB through learned temporal features,
 confirming tracks at the lowest false track rate (0.79\,/\,100\,sweeps),
 a $4.7\times$ reduction versus CFAR.
 The ConvGRU reaches $P_d = 100\,\%$ at SNR\,=\,4\,dB through recurrent
-temporal accumulation, 4--6\,dB below the CFAR knee, while operating in
+temporal accumulation, 8\,dB below the CFAR knee (100\,\% crossing: GRU at 4\,dB, CFAR at 12\,dB), while operating in
 $\mathcal{O}(1)$ per-sweep streaming mode.
 \end{abstract}
 
@@ -110,9 +110,9 @@ trade-offs relevant to real-time deployment.
 The simulated radar has $N_\mathrm{az} = 180$ azimuth bins ($2^\circ$
 resolution) and $N_r = 64$ range bins (7.5\,m/bin, max range $\approx
 480\,\mathrm{m}$, $\Delta t = 2\,\mathrm{s}$ per sweep at 30\,RPM).
-A target return at SNR $s$ is injected at a fixed (az,\,$r$) cell, displaced
-by a radial velocity of 1.5\,bins/sweep and a tangential velocity of
-$2.0^\circ$/sweep.
+Per-trial target parameters are drawn uniformly at random: range bin from
+$[10, N_r-10]$, azimuth from $[0^\circ, 360^\circ)$, radial velocity from
+$[-3, 3]$\,bins/sweep, and tangential velocity from $[-4, 4]^\circ$/sweep.
 Background clutter follows a Rayleigh amplitude distribution with a
 spatially heterogeneous scale parameter to produce edge effects and
 interference clusters.
@@ -131,8 +131,8 @@ where $\alpha$ is calibrated to achieve an empirical
 $P_\mathrm{fa} = 4.66\,\%$.
 Detections are fed to a nearest-neighbour Kalman filter with state vector
 $\mathbf{x} = [\mathrm{az},\, r,\, v_\mathrm{az},\, v_r]^\top$.
-A track is confirmed after three consecutive gate associations within an
-8-bin gate radius.
+A track is confirmed after four gate associations
+(Mahalanobis$^2$ gate $\gamma = 16$, equivalent to a $\approx$4-bin radius).
 
 \subsection{Pipeline 2 --- CNN + KF}
 
@@ -214,7 +214,8 @@ LRT and DP-TBD are evaluated as standalone detectors at cell level
 ROC comparison.
 Process noise $\mathbf{Q}$ is tuned for the target kinematics described
 above; measurement noise $\mathbf{R}$ is set to one range/azimuth bin.
-Confirmation requires three associations within an 8-bin Mahalanobis gate.
+Confirmation requires four associations within a Mahalanobis$^2$ gate $\gamma = 16$
+($\approx$4-bin radius).
 
 %──────────────────────────────────────────────────────────────────────────────
 \section{Experimental Setup}
@@ -264,7 +265,7 @@ sequence) are computed \emph{per cell} and directly detect the target's
 pass-through regardless of which specific sweep it occurred in, giving a
 30-point AUC advantage.
 The ConvGRU achieves 100\,\% $P_d$ at SNR\,=\,4\,dB through recurrent
-accumulation of the per-sweep signal, 4--6\,dB below the CFAR knee.
+accumulation of the per-sweep signal, 8\,dB below the CFAR knee (100\,\% crossing: GRU at 4\,dB, CFAR at 12\,dB).
 
 \begin{table}[h]
 \caption{Probability of Detection vs.\ SNR (30 trials each).
@@ -338,7 +339,7 @@ This is why a learned detector with only 19\,000 parameters achieves a
            Both classical integrators remain near the false-alarm floor at
            all SNR levels due to integration loss from target motion.
            The ConvGRU+KF (magenta) reaches 100\,\% at 4\,dB, roughly
-           4--6\,dB below the CFAR knee.}
+           8\,dB below the CFAR knee (100\,\% crossing: GRU at 4\,dB, CFAR at 12\,dB).}
   \label{fig:snr}
 \end{figure}
 
@@ -358,7 +359,7 @@ low-confidence detections in dense clutter that occasionally gate to the KF.
 Table~\ref{tab:latency} reports mean sweeps to confirmed track.
 Both ML pipelines reduce confirmation latency by 1.5--3.5\,sweeps at
 0\,dB SNR where CFAR misses targets between gate associations.
-At 20\,dB all three reach the hardware minimum imposed by the 3-association
+At 20\,dB all three reach the hardware minimum imposed by the 4-association
 confirmation criterion.
 
 \begin{table}[h]
