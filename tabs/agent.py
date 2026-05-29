@@ -1,10 +1,11 @@
 """
 tabs/agent.py — Agentic MLOps tab.
 
-A Claude-powered advisor that interprets PSI drift alerts, queries MLflow
-experiment history, and recommends a retraining action. Demonstrates agentic
-AI (tool use + multi-step reasoning) integrated with the pipeline in the
-previous tab.
+Claude-powered advisor with:
+  - Four preset drift scenarios + custom scenario builder
+  - Tool inspector (see what each tool returns before running)
+  - Live agent trace with tool call / result cards
+  - Follow-up conversation after the initial recommendation
 """
 
 import json
@@ -20,14 +21,14 @@ try:
 except ImportError:
     _ANTHROPIC_OK = False
 
-# ── Simulated data backing the tools ─────────────────────────────────────────
+# ── Preset scenarios ──────────────────────────────────────────────────────────
 
-_SCENARIOS = {
+_PRESETS = {
     "stable": {
-        "label": "✅  Stable fleet",
+        "label": "✅ Stable",
         "description": (
-            "Routine scheduled check. All units have been operating in known environments "
-            "for 7 days. No anomalies reported by the monitoring backend."
+            "Routine scheduled check. All units operating in known environments for 7 days. "
+            "No anomalies reported."
         ),
         "fleet": [
             {"unit_id": "XENTA-C3-0041", "model_version": "v7", "psi": 0.04, "status": "ok",    "env": "inland"},
@@ -37,11 +38,10 @@ _SCENARIOS = {
         ],
     },
     "coastal_drift": {
-        "label": "🌊  Coastal drift alert",
+        "label": "🌊 Coastal drift",
         "description": (
-            "Three coastal XENTA-C3 units entered PSI alert state after 48 h of high sea state. "
-            "Inland and urban units remain nominal. The fleet monitoring backend has filed an "
-            "automatic retraining review ticket."
+            "Three coastal units entered PSI alert state after 48 h of high sea state. "
+            "Inland and urban units remain nominal."
         ),
         "fleet": [
             {"unit_id": "XENTA-C3-0041", "model_version": "v7", "psi": 0.05, "status": "ok",    "env": "inland"},
@@ -52,12 +52,10 @@ _SCENARIOS = {
         ],
     },
     "new_drone": {
-        "label": "🚁  New drone type",
+        "label": "🚁 New drone",
         "description": (
-            "Fleet-wide moderate PSI drift appearing simultaneously across all environments. "
-            "PSI is driven by the spectral centroid feature rather than signal energy — "
-            "consistent with a new drone airframe whose rotor micro-Doppler signature "
-            "falls outside the training distribution."
+            "Fleet-wide moderate PSI drift across all environments simultaneously. "
+            "Spectral centroid driven — consistent with an unknown drone airframe."
         ),
         "fleet": [
             {"unit_id": "XENTA-C3-0041", "model_version": "v7", "psi": 0.17, "status": "warn", "env": "inland"},
@@ -68,11 +66,10 @@ _SCENARIOS = {
         ],
     },
     "hw_fault": {
-        "label": "⚠️  Suspected hardware fault",
+        "label": "⚠️ HW fault",
         "description": (
-            "XENTA-C3-0042 shows PSI = 0.67 — far above the alert threshold and well above "
-            "what any environmental shift would produce. All other units are nominal. "
-            "The unit was recently moved to a new site and physically re-mounted."
+            "XENTA-C3-0042 shows PSI = 0.67 — extreme, isolated, after a physical remount. "
+            "All other units are nominal."
         ),
         "fleet": [
             {"unit_id": "XENTA-C3-0041", "model_version": "v7", "psi": 0.05, "status": "ok",    "env": "inland"},
@@ -84,32 +81,26 @@ _SCENARIOS = {
 }
 
 _MLF_RUNS = [
-    {
-        "run_id": "7f03b68e8ac5", "run_name": "adventurous-loon-618",
-        "model": "ConvGRU", "best_val_f1": 0.356, "n_params": 5694,
-        "trained_on": "synthetic + range_v1 (800+312 seqs)", "registry": "Production",
-    },
-    {
-        "run_id": "3f126326dd21", "run_name": "bold-hawk-201",
-        "model": "ConvGRU", "best_val_f1": 0.341, "n_params": 5694,
-        "trained_on": "synthetic only (800 seqs)", "registry": "Archived",
-    },
-    {
-        "run_id": "e633e618604d", "run_name": "calm-jay-077",
-        "model": "CNN", "best_val_f1": 0.307, "n_params": 19073,
-        "trained_on": "synthetic only (800 seqs)", "registry": "Archived",
-    },
+    {"run_id": "7f03b68e8ac5", "run_name": "adventurous-loon-618",
+     "model": "ConvGRU", "best_val_f1": 0.356, "n_params": 5694,
+     "trained_on": "synthetic + range_v1 (800+312 seqs)", "registry": "Production"},
+    {"run_id": "3f126326dd21", "run_name": "bold-hawk-201",
+     "model": "ConvGRU", "best_val_f1": 0.341, "n_params": 5694,
+     "trained_on": "synthetic only (800 seqs)", "registry": "Archived"},
+    {"run_id": "e633e618604d", "run_name": "calm-jay-077",
+     "model": "CNN", "best_val_f1": 0.307, "n_params": 19073,
+     "trained_on": "synthetic only (800 seqs)", "registry": "Archived"},
 ]
 
-# ── Tool definitions (Anthropic tool_use schema) ──────────────────────────────
+# ── Tool definitions ──────────────────────────────────────────────────────────
 
 _TOOLS = [
     {
         "name": "get_fleet_status",
         "description": (
             "Returns the current deployment status of all XENTA fleet units: "
-            "unit ID, current model version, latest PSI score, alert status, "
-            "and operating environment. Always call this first."
+            "unit ID, model version, PSI score, alert status, and operating environment. "
+            "Always call this first."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -118,15 +109,13 @@ _TOOLS = [
         "description": (
             "Returns the detailed PSI drift report for a specific XENTA unit: "
             "psi_energy, psi_spectral_centroid, psi_overall, status, and distribution stats. "
-            "Call this for every unit in warn or alert state."
+            "Call for every unit in warn or alert state."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "unit_id": {
-                    "type": "string",
-                    "description": "XENTA unit serial number, e.g. 'XENTA-C3-0042'",
-                }
+                "unit_id": {"type": "string",
+                            "description": "XENTA unit serial number, e.g. 'XENTA-C3-0042'"}
             },
             "required": ["unit_id"],
         },
@@ -134,17 +123,13 @@ _TOOLS = [
     {
         "name": "query_mlflow_runs",
         "description": (
-            "Returns recent MLflow training runs: model type, best val F1, training data used, "
-            "and registry stage. Check this before recommending retraining — "
-            "a better model may already exist in Staging."
+            "Returns recent MLflow training runs: model type, best val F1, training data, "
+            "and registry stage. Check before recommending retraining."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "n_runs": {
-                    "type": "integer",
-                    "description": "Number of recent runs to return (default 5)",
-                }
+                "n_runs": {"type": "integer", "description": "Runs to return (default 5)"}
             },
             "required": [],
         },
@@ -152,43 +137,40 @@ _TOOLS = [
     {
         "name": "get_model_registry",
         "description": (
-            "Returns the MLflow model registry state: current Production version, "
-            "any Staging candidate, promotion timestamp, accuracy gate thresholds, "
-            "and what data it was trained on."
+            "Returns the MLflow model registry: current Production version, "
+            "any Staging candidate, accuracy gate thresholds, and training data provenance."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 ]
 
-_SYSTEM = """You are an MLOps advisor for the Weibel XENTA counter-UAS radar fleet.
+_DEFAULT_SYSTEM = """You are an MLOps advisor for the Weibel XENTA counter-UAS radar fleet.
 
 Your task:
 1. Call get_fleet_status to understand the fleet-wide picture.
 2. For any unit in warn or alert state, call get_psi_report to get the breakdown.
-3. Call query_mlflow_runs and get_model_registry to understand the current model before recommending retraining.
+3. Call query_mlflow_runs and get_model_registry to understand the current model.
 4. Give a clear, specific, justified recommendation — one of:
-   - No action (explain why the drift is within tolerance)
-   - Increase monitoring cadence (for warn-level drift)
-   - Schedule test-range data collection (specify which units, environment, drone types)
-   - Trigger retraining (specify what new data is needed and why)
-   - Investigate hardware fault (when PSI is extreme and isolated to one unit — retraining will not help)
-   - Rollback model (when a regression is suspected)
+   - No action (drift within tolerance)
+   - Increase monitoring cadence
+   - Schedule test-range data collection (specify units, environment, drone types)
+   - Trigger retraining (specify what new data is needed)
+   - Investigate hardware fault (extreme isolated PSI — retraining will not help)
+   - Rollback model (suspected regression)
 
 Key domain knowledge:
-- PSI < 0.10: stable. PSI 0.10–0.20: warn. PSI > 0.20: alert. PSI > 0.50: likely hardware, not data.
-- Fleet-wide simultaneous drift across different environments → new drone type (centroid shift).
+- PSI < 0.10: stable. PSI 0.10–0.20: warn. PSI > 0.20: alert. PSI > 0.50: likely hardware.
+- Fleet-wide simultaneous drift across environments → new drone type (centroid shift).
 - Localised drift on units sharing an environment → environmental/clutter change (energy shift).
-- Single-unit extreme drift while others are normal → hardware fault, not a retraining problem.
-- Before recommending retraining, confirm no Staging model already covers the new distribution.
+- Single-unit extreme drift while others are normal → hardware fault, not a data problem.
+- Check registry before recommending retraining — a Staging model may already exist.
 
-Be concise. Cite specific PSI numbers, unit IDs, and model versions in your recommendation."""
+Be concise. Cite specific PSI numbers, unit IDs, and model versions."""
 
 
-# ── Tool execution ─────────────────────────────────────────────────────────────
+# ── Tool execution ────────────────────────────────────────────────────────────
 
-def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
-    fleet = _SCENARIOS[scenario_key]["fleet"]
-
+def _run_tool(name: str, inputs: dict, fleet: list) -> str:
     if name == "get_fleet_status":
         counts = {"alert": 0, "warn": 0, "ok": 0}
         for u in fleet:
@@ -204,7 +186,7 @@ def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
         uid = inputs.get("unit_id", "")
         unit = next((u for u in fleet if u["unit_id"] == uid), None)
         if unit is None:
-            return json.dumps({"error": f"Unit '{uid}' not in fleet"})
+            return json.dumps({"error": f"Unit '{uid}' not found"})
         psi = unit["psi"]
         return json.dumps({
             "unit_id": uid,
@@ -216,16 +198,17 @@ def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
             "thresholds":            {"warn": 0.10, "alert": 0.20},
             "sample_counts":         {"reference": 2000, "current": 490},
             "distribution_stats": {
-                "ref_energy_mean":    1.000,
-                "cur_energy_mean":    round(1.0 + psi * 0.55, 3),
-                "ref_centroid_mean":  0.300,
-                "cur_centroid_mean":  round(0.30 + psi * 0.22, 3),
+                "ref_energy_mean":   1.000,
+                "cur_energy_mean":   round(1.0 + psi * 0.55, 3),
+                "ref_centroid_mean": 0.300,
+                "cur_centroid_mean": round(0.30 + psi * 0.22, 3),
             },
         }, indent=2)
 
     if name == "query_mlflow_runs":
         n = inputs.get("n_runs", 5)
-        return json.dumps({"experiment": "recurrent-radar-detector", "runs": _MLF_RUNS[:n]}, indent=2)
+        return json.dumps({"experiment": "recurrent-radar-detector",
+                           "runs": _MLF_RUNS[:n]}, indent=2)
 
     if name == "get_model_registry":
         return json.dumps({
@@ -233,7 +216,8 @@ def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
             "Production": {
                 "version": "v7", "run_id": "7f03b68e8ac5",
                 "best_val_f1": 0.356,
-                "trained_on": "synthetic + range_v1 (800 synthetic + 312 real XENTA seqs, inland + light-coastal clutter)",
+                "trained_on": "synthetic + range_v1 (800 synthetic + 312 real XENTA seqs, "
+                              "inland + light-coastal clutter)",
                 "promoted_at": "2026-05-20T09:14:00Z",
             },
             "Staging": None,
@@ -243,30 +227,22 @@ def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
     return json.dumps({"error": f"Unknown tool: {name}"})
 
 
-# ── Agent loop ─────────────────────────────────────────────────────────────────
+# ── Agent loop ────────────────────────────────────────────────────────────────
 
-def _run_agent(scenario_key: str, api_key: str) -> list:
-    """Run the agent to completion and return the full event trace."""
-    import anthropic  # re-import in case top-level failed
+def _agent_loop(messages: list, fleet: list, api_key: str, system: str) -> tuple[list, list]:
+    """Run one agent loop pass. Returns (new_trace_events, updated_messages)."""
+    import anthropic
     client = anthropic.Anthropic(api_key=api_key)
+    trace = []
 
-    scen = _SCENARIOS[scenario_key]
-    messages = [{
-        "role": "user",
-        "content": f"Scenario: {scen['description']}\n\nPlease assess the fleet and give your recommendation.",
-    }]
-
-    trace = [("user", messages[0]["content"])]
-
-    for _ in range(8):  # max turns
+    for _ in range(8):
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1200,
-            system=_SYSTEM,
+            max_tokens=1400,
+            system=system,
             tools=_TOOLS,
             messages=messages,
         )
-
         messages.append({"role": "assistant", "content": response.content})
 
         for block in response.content:
@@ -281,7 +257,7 @@ def _run_agent(scenario_key: str, api_key: str) -> list:
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
-                result = _run_tool(block.name, block.input, scenario_key)
+                result = _run_tool(block.name, block.input, fleet)
                 trace.append(("tool_call", block.name, block.input))
                 trace.append(("tool_result", block.name, result))
                 tool_results.append({
@@ -289,10 +265,24 @@ def _run_agent(scenario_key: str, api_key: str) -> list:
                     "tool_use_id": block.id,
                     "content": result,
                 })
-
         messages.append({"role": "user", "content": tool_results})
 
-    return trace
+    return trace, messages
+
+
+def _run_agent(fleet: list, description: str, api_key: str, system: str) -> tuple[list, list]:
+    prompt = f"Scenario: {description}\n\nPlease assess the fleet and give your recommendation."
+    messages = [{"role": "user", "content": prompt}]
+    trace = [("user", prompt)]
+    new_events, messages = _agent_loop(messages, fleet, api_key, system)
+    return trace + new_events, messages
+
+
+def _run_followup(messages: list, question: str, fleet: list,
+                  api_key: str, system: str) -> tuple[list, list]:
+    messages = messages + [{"role": "user", "content": question}]
+    new_events, messages = _agent_loop(messages, fleet, api_key, system)
+    return new_events, messages
 
 
 # ── Rendering helpers ─────────────────────────────────────────────────────────
@@ -300,70 +290,71 @@ def _run_agent(scenario_key: str, api_key: str) -> list:
 def _card(border_color: str, label: str, body: str, mono: bool = False) -> str:
     font = "font-family:monospace;" if mono else ""
     return (
-        f"<div style='border-left:3px solid {border_color};background:rgba(0,0,0,0.25);"
+        f"<div style='border-left:3px solid {border_color};background:rgba(0,0,0,0.22);"
         f"padding:10px 14px;margin:6px 0;border-radius:0 6px 6px 0'>"
-        f"<div style='color:{border_color};font-weight:600;font-size:12px;margin-bottom:4px'>{label}</div>"
+        f"<div style='color:{border_color};font-weight:600;font-size:12px;margin-bottom:4px'>"
+        f"{label}</div>"
         f"<div style='color:#ddd;font-size:13px;{font}white-space:pre-wrap'>{body}</div>"
         f"</div>"
     )
 
 
-def _render_trace(trace: list):
-    for event in trace:
-        kind = event[0]
+def _render_events(events: list):
+    for ev in events:
+        kind = ev[0]
         if kind == "user":
-            st.markdown(_card("#555", "📨 Scenario prompt", event[1]), unsafe_allow_html=True)
+            st.markdown(_card("#555", "📨 Prompt", ev[1]), unsafe_allow_html=True)
         elif kind == "text":
-            st.markdown(_card("#2ecc71", "🤖 Agent", event[1]), unsafe_allow_html=True)
+            st.markdown(_card("#2ecc71", "🤖 Agent", ev[1]), unsafe_allow_html=True)
         elif kind == "tool_call":
-            args = json.dumps(event[2], separators=(",", ":")) if event[2] else "()"
-            st.markdown(_card("#c084fc", f"🔧 Tool call → {event[1]}", args, mono=True),
+            args = json.dumps(ev[2], separators=(",", ":")) if ev[2] else "()"
+            st.markdown(_card("#c084fc", f"🔧 Tool call → {ev[1]}", args, mono=True),
                         unsafe_allow_html=True)
         elif kind == "tool_result":
-            preview = event[2]
-            if len(preview) > 400:
-                preview = preview[:400] + "\n  …"
-            st.markdown(_card("#27ae60", f"📦 Result ← {event[1]}", preview, mono=True),
+            preview = ev[2]
+            if len(preview) > 450:
+                preview = preview[:450] + "\n  …"
+            st.markdown(_card("#27ae60", f"📦 Result ← {ev[1]}", preview, mono=True),
                         unsafe_allow_html=True)
+        elif kind == "followup_q":
+            st.markdown(_card("#3498db", f"💬 Follow-up", ev[1]), unsafe_allow_html=True)
 
 
-# ── Main render ────────────────────────────────────────────────────────────────
+def _psi_status(psi: float) -> str:
+    if psi >= 0.20:
+        return "alert"
+    if psi >= 0.10:
+        return "warn"
+    return "ok"
+
+
+# ── Main render ───────────────────────────────────────────────────────────────
 
 def render():
     try:
         _render_impl()
     except Exception:
-        st.error("Agentic MLOps tab encountered an error — details below:")
+        st.error("Agent tab error:")
         st.code(traceback.format_exc())
 
 
 def _render_impl():
     st.markdown("## Concept: Agentic MLOps Advisor")
     st.markdown(
-        "The pipeline described in the previous tab produces alerts — PSI spikes, accuracy regressions, "
-        "fleet drift reports. Someone or something still has to interpret them and decide what to do. "
-        "This tab explores what it would look like to hand that reasoning step to an LLM-based agent: "
-        "give it access to the same tools an on-call engineer would use, and ask it to "
-        "produce a justified, specific recommendation rather than just a number."
+        "The pipeline produces alerts — PSI spikes, drift reports, accuracy regressions. "
+        "This explores handing the interpretation step to an LLM agent: give it the same "
+        "tools an on-call engineer would use and ask it to produce a justified recommendation. "
+        "Build your own scenario, inspect what the agent sees, ask follow-up questions."
     )
     st.info(
-        "**Exploratory prototype** — the tools the agent calls are simulated backends backed by "
-        "the same PSI and MLflow logic from the pipeline tab. The agent itself is real: "
-        "Claude Haiku with tool use, running live against the Anthropic API. "
-        "The four scenarios are designed so each requires a *different* response — "
-        "distinguishing a data problem from an environmental shift from a hardware fault."
+        "**Exploratory prototype** — tool backends are simulated. "
+        "The agent is real: Claude Haiku with tool use, live against the Anthropic API."
     )
 
-    # ── Dependency check ──────────────────────────────────────────────────────
     if not _ANTHROPIC_OK:
-        st.error(
-            "The `anthropic` package is not installed in this environment. "
-            "It was added to `requirements.txt` — **reboot the Streamlit Cloud app** "
-            "to install it: Manage app → Reboot app."
-        )
+        st.error("The `anthropic` package is not installed — reboot the Streamlit Cloud app.")
         return
 
-    # ── API key ───────────────────────────────────────────────────────────────
     try:
         api_key = st.secrets.get("ANTHROPIC_API_KEY", "") or ""
     except Exception:
@@ -371,47 +362,79 @@ def _render_impl():
     api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
 
     if not api_key:
-        st.warning(
-            "No `ANTHROPIC_API_KEY` found. "
-            "Add it to `.streamlit/secrets.toml` (local) or Streamlit Cloud → Settings → Secrets (deployed)."
-        )
+        st.warning("No `ANTHROPIC_API_KEY` found.")
         st.code("# .streamlit/secrets.toml\nANTHROPIC_API_KEY = \"sk-ant-...\"", language="toml")
         return
 
     st.divider()
 
-    # ── Scenario selector ─────────────────────────────────────────────────────
-    st.markdown("### 1 — Choose a drift scenario")
-    scenario_keys = list(_SCENARIOS.keys())
-    scenario_labels = [_SCENARIOS[k]["label"] for k in scenario_keys]
+    # ── 1. Scenario selector ──────────────────────────────────────────────────
+    st.markdown("### 1 — Choose a scenario")
 
-    prev = st.session_state.get("agent_scenario", "coastal_drift")
-    prev_idx = scenario_keys.index(prev) if prev in scenario_keys else 1
+    preset_keys   = list(_PRESETS.keys())
+    preset_labels = [_PRESETS[k]["label"] for k in preset_keys]
+    all_labels    = preset_labels + ["🛠 Custom"]
 
-    chosen_label = st.radio(
-        "Scenario",
-        scenario_labels,
-        index=prev_idx,
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    selected = scenario_keys[scenario_labels.index(chosen_label)]
-    if selected != prev:
+    prev_sel = st.session_state.get("agent_scenario", "coastal_drift")
+    if prev_sel == "custom":
+        prev_idx = len(all_labels) - 1
+    else:
+        prev_idx = preset_keys.index(prev_sel) if prev_sel in preset_keys else 1
+
+    chosen = st.radio("Scenario", all_labels, index=prev_idx,
+                      horizontal=True, label_visibility="collapsed")
+
+    selected = "custom" if chosen == "🛠 Custom" else preset_keys[all_labels.index(chosen)]
+
+    if selected != prev_sel:
         st.session_state["agent_scenario"] = selected
         st.session_state.pop("agent_trace", None)
+        st.session_state.pop("agent_messages", None)
+        st.session_state.pop("agent_followups", None)
         st.rerun()
 
-    st.caption(f"**{_SCENARIOS[selected]['description']}**")
+    # ── Custom scenario builder ───────────────────────────────────────────────
+    if selected == "custom":
+        with st.expander("🛠 Build your scenario", expanded=True):
+            st.caption("Set PSI and environment for each unit, then run the agent.")
+            n_units = st.slider("Number of units", 2, 5, 3, key="custom_n")
+            envs = ["inland", "coastal", "coastal-high-sea", "urban", "border"]
+            custom_fleet = []
+            cols = st.columns(n_units)
+            for i, col in enumerate(cols):
+                with col:
+                    uid = f"XENTA-C3-{100 + i:04d}"
+                    psi = st.slider(f"{uid}\nPSI", 0.01, 0.70, [0.05, 0.18, 0.35, 0.08, 0.52][i % 5],
+                                    step=0.01, key=f"custom_psi_{i}")
+                    env = st.selectbox("Environment", envs,
+                                       index=i % len(envs), key=f"custom_env_{i}")
+                    custom_fleet.append({
+                        "unit_id": uid, "model_version": "v7",
+                        "psi": psi, "status": _psi_status(psi), "env": env,
+                    })
+            st.session_state["agent_custom_fleet"] = custom_fleet
+            desc = (f"Custom scenario with {n_units} units. "
+                    + ", ".join(f"{u['unit_id']} PSI={u['psi']:.2f} ({u['env']})"
+                                for u in custom_fleet))
+            st.session_state["agent_custom_desc"] = desc
+    else:
+        st.caption(f"**{_PRESETS[selected]['description']}**")
 
-    # ── Fleet snapshot ────────────────────────────────────────────────────────
-    st.markdown("### 2 — Simulated fleet snapshot")
-    fleet = _SCENARIOS[selected]["fleet"]
+    # Resolve active fleet + description
+    if selected == "custom":
+        fleet = st.session_state.get("agent_custom_fleet", [])
+        description = st.session_state.get("agent_custom_desc", "Custom scenario.")
+    else:
+        fleet = _PRESETS[selected]["fleet"]
+        description = _PRESETS[selected]["description"]
+
+    # ── 2. Fleet snapshot ─────────────────────────────────────────────────────
+    st.markdown("### 2 — Fleet snapshot")
     status_icon = {"ok": "🟢", "warn": "🟡", "alert": "🔴"}
-    # 2-column grid works on both desktop and mobile
     for i in range(0, len(fleet), 2):
-        row_units = fleet[i:i + 2]
-        cols = st.columns(len(row_units))
-        for col, unit in zip(cols, row_units):
+        row = fleet[i:i + 2]
+        cols = st.columns(len(row))
+        for col, unit in zip(cols, row):
             col.metric(
                 label=unit["unit_id"],
                 value=f"PSI {unit['psi']:.2f}",
@@ -420,25 +443,100 @@ def _render_impl():
             )
             col.caption(unit["env"])
 
+    # ── Tool inspector ────────────────────────────────────────────────────────
+    with st.expander("🔍 Inspect tool responses — see what the agent will query"):
+        tool_tabs = st.tabs(["get_fleet_status", "get_psi_report", "query_mlflow_runs", "get_model_registry"])
+        with tool_tabs[0]:
+            st.json(json.loads(_run_tool("get_fleet_status", {}, fleet)))
+        with tool_tabs[1]:
+            alert_units = [u for u in fleet if u["status"] in ("alert", "warn")]
+            if alert_units:
+                uid_choice = st.selectbox("Unit", [u["unit_id"] for u in alert_units],
+                                          key="inspector_uid")
+                st.json(json.loads(_run_tool("get_psi_report", {"unit_id": uid_choice}, fleet)))
+            else:
+                st.info("No warn/alert units in this scenario.")
+        with tool_tabs[2]:
+            st.json(json.loads(_run_tool("query_mlflow_runs", {}, fleet)))
+        with tool_tabs[3]:
+            st.json(json.loads(_run_tool("get_model_registry", {}, fleet)))
+
+    # ── Agent instructions ────────────────────────────────────────────────────
+    with st.expander("📝 Edit agent instructions (system prompt)"):
+        system = st.text_area(
+            "System prompt",
+            value=st.session_state.get("agent_system", _DEFAULT_SYSTEM),
+            height=260,
+            key="agent_system_input",
+            label_visibility="collapsed",
+        )
+        col_save, col_reset, _ = st.columns([1, 1, 4])
+        if col_save.button("Save", key="sys_save"):
+            st.session_state["agent_system"] = system
+            st.session_state.pop("agent_trace", None)
+            st.session_state.pop("agent_messages", None)
+            st.session_state.pop("agent_followups", None)
+            st.success("Saved — next run will use the updated instructions.")
+        if col_reset.button("Reset", key="sys_reset"):
+            st.session_state["agent_system"] = _DEFAULT_SYSTEM
+            st.session_state.pop("agent_trace", None)
+            st.session_state.pop("agent_messages", None)
+            st.session_state.pop("agent_followups", None)
+            st.rerun()
+    system = st.session_state.get("agent_system", _DEFAULT_SYSTEM)
+
     st.divider()
 
-    # ── Agent section ─────────────────────────────────────────────────────────
-    st.markdown("### 3 — Agent reasoning trace"
-    "\n*Watch the agent call tools, observe results, and build its recommendation step by step.*")
+    # ── 3. Agent trace ────────────────────────────────────────────────────────
+    st.markdown("### 3 — Agent reasoning trace")
+    st.caption("Watch the agent call tools, observe results, and build its recommendation.")
 
-    run_btn = st.button("▶  Run Agent", type="primary", key="agent_run_btn")
+    run_col, clear_col, _ = st.columns([1, 1, 5])
+    run_btn   = run_col.button("▶  Run Agent", type="primary", key="agent_run_btn")
+    clear_btn = clear_col.button("✕  Clear", key="agent_clear_btn")
+
+    if clear_btn:
+        for k in ("agent_trace", "agent_messages", "agent_followups"):
+            st.session_state.pop(k, None)
+        st.rerun()
 
     if run_btn:
-        st.session_state.pop("agent_trace", None)
+        for k in ("agent_trace", "agent_messages", "agent_followups"):
+            st.session_state.pop(k, None)
         with st.spinner("Agent reasoning…"):
-            trace = _run_agent(selected, api_key)
-        st.session_state["agent_trace"] = trace
+            trace, messages = _run_agent(fleet, description, api_key, system)
+        st.session_state["agent_trace"]    = trace
+        st.session_state["agent_messages"] = messages
+        st.session_state["agent_followups"] = []
         st.rerun()
 
     if "agent_trace" in st.session_state:
-        _render_trace(st.session_state["agent_trace"])
+        _render_events(st.session_state["agent_trace"])
+
+        # Render any follow-up exchanges
+        for q, evs in st.session_state.get("agent_followups", []):
+            st.markdown(_card("#3498db", "💬 Follow-up", q), unsafe_allow_html=True)
+            _render_events(evs)
+
+        st.divider()
+
+        # ── Follow-up conversation ────────────────────────────────────────────
+        st.markdown("**Ask a follow-up — the agent keeps its tools and context**")
+        followup = st.chat_input(
+            "e.g. 'What if we can't access the test range for 3 weeks?' "
+            "or 'How confident are you in that recommendation?'"
+        )
+        if followup:
+            with st.spinner("Agent thinking…"):
+                evs, updated_msgs = _run_followup(
+                    st.session_state["agent_messages"],
+                    followup, fleet, api_key, system,
+                )
+            st.session_state["agent_messages"] = updated_msgs
+            st.session_state.setdefault("agent_followups", []).append((followup, evs))
+            st.rerun()
     else:
-        st.info("Select a scenario above and click **▶ Run Agent** to see the agent in action.")
+        st.info("Select a scenario and click **▶ Run Agent** to start.")
 
     st.divider()
 
@@ -446,42 +544,32 @@ def _render_impl():
     st.markdown("### Why I think this is worth building")
     col_l, col_r = st.columns(2)
     with col_l:
-        st.markdown("**The agentic patterns it would demonstrate**")
+        st.markdown("**Agentic patterns shown**")
         st.markdown(
-            "- **Tool use over static context**: the agent queries live state rather than "
-            "summarising a fixed dashboard — it sees what an engineer would see\n"
-            "- **Multi-step investigative reasoning**: fleet-wide check first → drill into "
-            "specific units → inspect training history → form recommendation. "
-            "That sequence matters; doing it in the wrong order wastes tool calls\n"
-            "- **Domain-aware triage**: the system prompt encodes the key distinction — "
-            "PSI 0.67 on a single unit after a physical remount is a hardware problem, "
-            "not a retraining problem. An LLM with the right context can make that call\n"
-            "- **Auditable reasoning**: every recommendation in the trace is grounded in "
-            "specific numbers and unit IDs, not vague advice — making human review fast"
+            "- **Tool use over static context** — queries live state, not a fixed dashboard\n"
+            "- **Multi-step investigation** — fleet-wide first, then drill, then training history\n"
+            "- **Domain-aware triage** — distinguishes HW fault (PSI 0.67, isolated) "
+            "from environmental drift (shared environment) from new drone (fleet-wide centroid)\n"
+            "- **Conversational refinement** — follow-ups let the operator push back, "
+            "add constraints, or ask for alternatives without starting over"
         )
     with col_r:
-        st.markdown("**How it would slot into the proposed pipeline**")
+        st.markdown("**How it would slot into the pipeline**")
         st.code(
-            "# PSI monitor fires on cron schedule\n"
-            "report = drift_detect.run_fleet_check()\n"
-            "\n"
+            "# PSI monitor fires on schedule\n"
             "if report.has_alerts:\n"
             "    rec = mlops_agent.advise(\n"
             "        fleet_report=report,\n"
-            "        tools=[\n"
-            "            get_fleet_status,\n"
-            "            get_psi_report,\n"
-            "            query_mlflow_runs,\n"
-            "            get_model_registry,\n"
-            "        ],\n"
+            "        tools=[get_fleet_status,\n"
+            "               get_psi_report,\n"
+            "               query_mlflow_runs,\n"
+            "               get_model_registry],\n"
             "    )\n"
-            "    # Draft posted to ops channel for human approval\n"
-            "    ops.notify(rec)\n"
-            "    # Human approves → retraining or rollback triggered\n"
-            "    # Agent recommendation stored in audit log",
+            "    ops.notify(rec)          # human reviews\n"
+            "    audit_log.append(rec)    # traceable",
             language="python",
         )
         st.caption(
-            "The agent would sit between the automated PSI alert and the human decision — "
-            "reducing the cognitive load of on-call review without removing the human from the loop."
+            "The agent sits between automated alert and human decision — "
+            "reducing on-call cognitive load without removing the human from the loop."
         )
