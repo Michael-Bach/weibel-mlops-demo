@@ -137,7 +137,7 @@ def render():
     st.divider()
     st.markdown("### 1 — The hardware opportunity: two existing tiers")
 
-    col_t1, col_arrow, col_t2 = st.columns([10, 1, 10])
+    col_t1, col_t2 = st.columns(2)
 
     with col_t1:
         st.markdown("#### 🎯 Tier 1 — Instrumentation Radar")
@@ -165,10 +165,6 @@ def render():
             "training label would come from the instrumentation radar — not from the XENTA "
             "unit under test. That separation is what makes instrument-error absorption possible."
         )
-
-    with col_arrow:
-        st.markdown("<div style='margin-top:120px;font-size:28px;text-align:center'>→</div>",
-                    unsafe_allow_html=True)
 
     with col_t2:
         st.markdown("#### 📡 Tier 2 — XENTA-C Operational Radar")
@@ -433,12 +429,13 @@ def render():
     epochs_val   = _read_param("epochs") or "30"
     lr_val       = _read_param("lr") or "0.001"
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Model",       "ConvGRU")
     c2.metric("Parameters",  n_params_val)
     c3.metric("Best val F1", f"{best_f1_val:.4f}")
-    c4.metric("Epochs",      epochs_val)
-    c5.metric("LR",          lr_val)
+    c4, c5, _ = st.columns(3)
+    c4.metric("Epochs", epochs_val)
+    c5.metric("LR",     lr_val)
 
     # Training curves with seq-len curriculum shading
     fig_ml = go.Figure()

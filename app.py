@@ -77,16 +77,16 @@ from tabs import classical, bridge, math_tab, comparison, roc, tradeoffs, live_r
 
 (tab_classical, tab_bridge, tab_compare,
  tab_roc, tab_tradeoffs, tab_pipeline, tab_agent, tab_math, tab_live, tab_paper) = st.tabs([
-    "🔭  Classical Radar",
-    "🤖  From CFAR to ML",
-    "📊  Algorithm Comparison",
-    "📉  ROC Curve",
-    "⚖️  Strengths & Trade-offs",
-    "🔁  MLOps Pipeline",
-    "🧠  Agentic MLOps",
-    "📐  The Math",
-    "📻  Live Radar",
-    "📄  Paper",
+    "🔭 Classical",
+    "🤖 CFAR → ML",
+    "📊 Comparison",
+    "📉 ROC",
+    "⚖️ Trade-offs",
+    "🔁 Pipeline",
+    "🧠 Agent",
+    "📐 Math",
+    "📻 Live",
+    "📄 Paper",
 ])
 
 with tab_classical:

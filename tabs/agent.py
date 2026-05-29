@@ -383,34 +383,42 @@ def _render_impl():
     # ── Scenario selector ─────────────────────────────────────────────────────
     st.markdown("### 1 — Choose a drift scenario")
     scenario_keys = list(_SCENARIOS.keys())
-    selected = st.session_state.get("agent_scenario", "coastal_drift")
+    scenario_labels = [_SCENARIOS[k]["label"] for k in scenario_keys]
 
-    scen_cols = st.columns(len(scenario_keys))
-    for col, key in zip(scen_cols, scenario_keys):
-        scen = _SCENARIOS[key]
-        with col:
-            if st.button(scen["label"], key=f"scen_{key}", use_container_width=True,
-                         type="primary" if key == selected else "secondary"):
-                st.session_state["agent_scenario"] = key
-                st.session_state.pop("agent_trace", None)
-                st.rerun()
+    prev = st.session_state.get("agent_scenario", "coastal_drift")
+    prev_idx = scenario_keys.index(prev) if prev in scenario_keys else 1
 
-    selected = st.session_state.get("agent_scenario", "coastal_drift")
+    chosen_label = st.radio(
+        "Scenario",
+        scenario_labels,
+        index=prev_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    selected = scenario_keys[scenario_labels.index(chosen_label)]
+    if selected != prev:
+        st.session_state["agent_scenario"] = selected
+        st.session_state.pop("agent_trace", None)
+        st.rerun()
+
     st.caption(f"**{_SCENARIOS[selected]['description']}**")
 
     # ── Fleet snapshot ────────────────────────────────────────────────────────
     st.markdown("### 2 — Simulated fleet snapshot")
     fleet = _SCENARIOS[selected]["fleet"]
     status_icon = {"ok": "🟢", "warn": "🟡", "alert": "🔴"}
-    cols = st.columns(len(fleet))
-    for col, unit in zip(cols, fleet):
-        col.metric(
-            label=unit["unit_id"],
-            value=f"PSI {unit['psi']:.2f}",
-            delta=f"{status_icon[unit['status']]} {unit['status'].upper()}",
-            delta_color="off",
-        )
-        col.caption(unit["env"])
+    # 2-column grid works on both desktop and mobile
+    for i in range(0, len(fleet), 2):
+        row_units = fleet[i:i + 2]
+        cols = st.columns(len(row_units))
+        for col, unit in zip(cols, row_units):
+            col.metric(
+                label=unit["unit_id"],
+                value=f"PSI {unit['psi']:.2f}",
+                delta=f"{status_icon[unit['status']]} {unit['status'].upper()}",
+                delta_color="off",
+            )
+            col.caption(unit["env"])
 
     st.divider()
 
