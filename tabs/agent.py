@@ -9,9 +9,16 @@ previous tab.
 
 import json
 import os
+import traceback
 from datetime import datetime
 
 import streamlit as st
+
+try:
+    import anthropic as _anthropic_mod
+    _ANTHROPIC_OK = True
+except ImportError:
+    _ANTHROPIC_OK = False
 
 # ── Simulated data backing the tools ─────────────────────────────────────────
 
@@ -240,7 +247,7 @@ def _run_tool(name: str, inputs: dict, scenario_key: str) -> str:
 
 def _run_agent(scenario_key: str, api_key: str) -> list:
     """Run the agent to completion and return the full event trace."""
-    import anthropic
+    import anthropic  # re-import in case top-level failed
     client = anthropic.Anthropic(api_key=api_key)
 
     scen = _SCENARIOS[scenario_key]
@@ -323,6 +330,14 @@ def _render_trace(trace: list):
 # ── Main render ────────────────────────────────────────────────────────────────
 
 def render():
+    try:
+        _render_impl()
+    except Exception:
+        st.error("Agentic MLOps tab encountered an error — details below:")
+        st.code(traceback.format_exc())
+
+
+def _render_impl():
     st.markdown("## Agentic MLOps: Claude-Powered Drift Advisor")
     st.markdown(
         "A Claude agent receives a fleet alert, autonomously queries PSI drift reports, "
@@ -331,6 +346,15 @@ def render():
         "demonstrating that the agent can reason about the difference between a data problem, "
         "an environmental shift, and a hardware fault."
     )
+
+    # ── Dependency check ──────────────────────────────────────────────────────
+    if not _ANTHROPIC_OK:
+        st.error(
+            "The `anthropic` package is not installed in this environment. "
+            "It was added to `requirements.txt` — **reboot the Streamlit Cloud app** "
+            "to install it: Manage app → Reboot app."
+        )
+        return
 
     # ── API key ───────────────────────────────────────────────────────────────
     try:
