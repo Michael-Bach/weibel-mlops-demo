@@ -3,8 +3,10 @@ tabs/comparison.py — render(snr_db) for tab_compare.
 """
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from pathlib import Path
 
 from radar.sessions import N_SW, N_AZ, N_RANGE, _RANGE_BIN_M
 from radar.detection import (
@@ -56,15 +58,21 @@ def render():
     # ── How the comparison is made ────────────────────────────────────────────
     with st.expander("How the comparison is made — methodology"):
         st.markdown(
-            "All three pipelines are evaluated **at the same false-alarm rate** so none has an unfair advantage. "
-            "The classical detector's threshold is fixed; the ML thresholds are calibrated so all produce the same "
-            "fraction of noise-hits per grid cell. "
-            "The Kalman filter tracker is identical across all pipelines — only the upstream detector changes."
+            "All six detectors are evaluated **at the same false-alarm rate** so none has an unfair advantage. "
+            "Thresholds are calibrated so all produce the same cell-level noise-hit rate as CFAR. "
+            "Three pipelines use a Kalman filter for confirmed-track detection; three are evaluated "
+            "at cell level only (no KF backend — they output a score map, not a confirmed track)."
         )
         st.code(
-            "Classical:  raw PPI → CFAR (α=2.5) → peaks → KF (≥4 hits) → confirmed track\n"
-            "CNN+KF:     raw PPI → CNN  (batch)  → peaks → KF (≥4 hits) → confirmed track\n"
-            "GRU+KF:     raw PPI → ConvGRU (streaming, per-sweep hidden state) → peaks → KF → confirmed track",
+            "── KF-confirmed track detection ──────────────────────────────────────\n"
+            "CFAR+KF:     raw PPI → CFAR (α=2.5)             → peaks → KF → confirmed track\n"
+            "CNN+KF:      raw PPI → CNN  (batch, 10 sweeps)   → peaks → KF → confirmed track\n"
+            "GRU+KF:      raw PPI → ConvGRU (streaming/sweep) → peaks → KF → confirmed track\n"
+            "\n"
+            "── Cell-level detection (no KF) ──────────────────────────────────────\n"
+            "LRT:         raw PPI → sum squared normalised amplitudes → threshold\n"
+            "DP-TBD:      raw PPI → DP accumulate energy along best path → threshold\n"
+            "Transformer: raw PPI → patch self-attention across 10 sweeps → threshold",
             language="text",
         )
         col_pfa1, col_pfa2, col_pfa3, col_pfa4 = st.columns(4)
@@ -86,13 +94,18 @@ def render():
     # ── Pd vs SNR (pipeline comparison) ──────────────────────────────────────
     st.markdown("#### How often does each system detect the target — across all signal strengths?")
     st.caption(
-        "Signal strength (x-axis): higher = target echo is stronger relative to background noise. "
+        "Solid lines = confirmed-track Pd (CFAR/CNN/GRU with Kalman filter). "
+        "Dash-dot lines = cell-level Pd (LRT/DP-TBD/Transformer without KF — threshold at matched Pfa). "
         "Each point = 30 randomised trials at random target positions, speeds, and directions."
     )
     (snr_arr,
      cfar_sa_pd, cfar_kf_pd, cnn_b_pd, cnn_kf_pd,
      cfar_kf_rmse_arr, cnn_kf_rmse_arr,
      gru_kf_pd, gru_kf_rmse_arr) = _snr_sweep(cnn_thr=cnn_thr, gru_thr=gru_thr, _v=11)
+
+    # Load cell-level Pd from precomputed CSV (LRT, DP-TBD, Transformer)
+    _csv = Path("artifacts/comparison_snr.csv")
+    _df  = pd.read_csv(_csv) if _csv.exists() else None
 
     # Compute 90% Pd crossover SNR — use GRU (best ML pipeline) for the gap annotation
     _gru_kf_arr  = np.array(gru_kf_pd)
@@ -119,6 +132,26 @@ def render():
         line=dict(color="#c084fc", width=3.0),
         marker=dict(size=8, symbol="diamond"),
     ))
+    if _df is not None:
+        fig_c.add_trace(go.Scatter(
+            x=_df["snr_db"], y=_df["lrt_pd"] * 100, mode="lines+markers",
+            name="LRT non-coherent  (cell-level)",
+            line=dict(color="#2ecc71", width=1.8, dash="dashdot"),
+            marker=dict(size=5, symbol="triangle-up"),
+        ))
+        fig_c.add_trace(go.Scatter(
+            x=_df["snr_db"], y=_df["dptbd_pd"] * 100, mode="lines+markers",
+            name="DP-TBD  (cell-level)",
+            line=dict(color="#e74c3c", width=1.8, dash="dashdot"),
+            marker=dict(size=5, symbol="triangle-down"),
+        ))
+        if "transformer_pd" in _df.columns:
+            fig_c.add_trace(go.Scatter(
+                x=_df["snr_db"], y=_df["transformer_pd"] * 100, mode="lines+markers",
+                name="Transformer  (cell-level)",
+                line=dict(color="#f39c12", width=1.8, dash="dashdot"),
+                marker=dict(size=6, symbol="star"),
+            ))
     fig_c.add_hline(y=50, line_dash="dot", line_color="#555",
                     annotation_text="detects half the time", annotation_position="right",
                     annotation_font_color="#888")
@@ -160,9 +193,9 @@ def render():
     )
     st.plotly_chart(fig_c, use_container_width=True)
     st.caption(
-        "All three pipelines compared at the same false-alarm rate (matched Pfa). "
-        "A detection counts when the confirmed track falls within ~45 m of the true target position. "
-        "GRU (◆ purple) = streaming ConvGRU that updates a learned detection heatmap each sweep."
+        "All six detectors compared at the same false-alarm rate (matched Pfa). "
+        "KF pipelines: detection counts when the confirmed track falls within ~45 m of the true target. "
+        "Cell-level detectors (dash-dot): detection counts when the score at the oracle target position exceeds the calibrated threshold."
     )
 
     st.divider()
@@ -174,46 +207,48 @@ def render():
     idx0  = int(np.argmin(np.abs(snr_arr - 0.0)))
     idx4  = int(np.argmin(np.abs(snr_arr - 4.0)))
 
-    col_tbl = st.columns(4)
-    col_tbl[0].markdown("**Metric**")
-    col_tbl[1].markdown("**Classical  (CFAR+KF)**")
-    col_tbl[2].markdown("**CNN+KF**")
-    col_tbl[3].markdown("**GRU+KF** ⭐")
+    # Cell-level Pd from CSV
+    def _csv_pd(col, snr):
+        if _df is None or col not in _df.columns: return "—"
+        row = _df[np.isclose(_df["snr_db"], snr, atol=0.5)]
+        return f"{row[col].values[0]*100:.0f} %" if len(row) else "—"
+
+    col_tbl = st.columns(7)
+    for i, h in enumerate(["**Metric**","**CFAR+KF**","**CNN+KF**","**GRU+KF** ⭐",
+                            "*LRT*†","*DP-TBD*†","*Transf.*†"]):
+        col_tbl[i].markdown(h)
 
     rows = [
-        ("Detection rate — faint target (0 dB signal)",
-         f"{cfar_kf_pd[idx0]*100:.0f} %",
-         f"{cnn_kf_pd[idx0]*100:.0f} %",
-         f"**{gru_kf_pd[idx0]*100:.0f} %**"),
-        ("Detection rate — at 4 dB signal",
-         f"{cfar_kf_pd[idx4]*100:.0f} %",
-         f"{cnn_kf_pd[idx4]*100:.0f} %",
-         f"**{gru_kf_pd[idx4]*100:.0f} %**"),
-        ("Detection rate — moderate target (10 dB signal)",
-         f"{cfar_kf_pd[idx10]*100:.0f} %",
-         f"{cnn_kf_pd[idx10]*100:.0f} %",
-         f"**{gru_kf_pd[idx10]*100:.0f} %**"),
-        ("Track position error at 10 dB signal",
-         f"{cfar_kf_rmse_arr[idx10] * _RANGE_BIN_M:.0f} m",
-         f"{cnn_kf_rmse_arr[idx10] * _RANGE_BIN_M:.0f} m",
-         f"**{gru_kf_rmse_arr[idx10] * _RANGE_BIN_M:.0f} m**"),
-        ("Spurious tracks on noise-only data",
-         f"{cfar_kf_ftr:.2f}",
-         f"{cnn_kf_ftr:.2f}",
-         f"**{gru_kf_ftr:.2f}**"),
+        ("Pd at 0 dB (faint target)",
+         f"{cfar_kf_pd[idx0]*100:.0f} %", f"{cnn_kf_pd[idx0]*100:.0f} %",
+         f"**{gru_kf_pd[idx0]*100:.0f} %**",
+         _csv_pd("lrt_pd", 0), _csv_pd("dptbd_pd", 0), _csv_pd("transformer_pd", 0)),
+        ("Pd at 4 dB",
+         f"{cfar_kf_pd[idx4]*100:.0f} %", f"{cnn_kf_pd[idx4]*100:.0f} %",
+         f"**{gru_kf_pd[idx4]*100:.0f} %**",
+         _csv_pd("lrt_pd", 4), _csv_pd("dptbd_pd", 4), _csv_pd("transformer_pd", 4)),
+        ("Pd at 10 dB (moderate target)",
+         f"{cfar_kf_pd[idx10]*100:.0f} %", f"{cnn_kf_pd[idx10]*100:.0f} %",
+         f"**{gru_kf_pd[idx10]*100:.0f} %**",
+         _csv_pd("lrt_pd", 12), _csv_pd("dptbd_pd", 12), _csv_pd("transformer_pd", 12)),
+        ("Track position error at 10 dB",
+         f"{cfar_kf_rmse_arr[idx10]*_RANGE_BIN_M:.0f} m",
+         f"{cnn_kf_rmse_arr[idx10]*_RANGE_BIN_M:.0f} m",
+         f"**{gru_kf_rmse_arr[idx10]*_RANGE_BIN_M:.0f} m**",
+         "N/A", "N/A", "N/A"),
+        ("Ghost tracks / noise window",
+         f"{cfar_kf_ftr:.2f}", f"{cnn_kf_ftr:.2f}", f"**{gru_kf_ftr:.2f}**",
+         "N/A", "N/A", "N/A"),
     ]
-    for label, v_cfar, v_cnn, v_gru in rows:
-        c0, c1, c2, c3 = st.columns(4)
-        c0.markdown(label)
-        c1.markdown(v_cfar)
-        c2.markdown(v_cnn)
-        c3.markdown(v_gru)
+    for row in rows:
+        cols = st.columns(7)
+        for i, v in enumerate(row):
+            cols[i].markdown(v)
 
     st.caption(
-        "Track position error = mean distance between the confirmed track estimate and the true target, "
-        "averaged over trials where the system detected. "
-        "Spurious tracks = confirmed ghost contacts per 10-sweep window when no target is present. "
-        "All pipelines evaluated at the same false-alarm rate (matched Pfa)."
+        "† Cell-level detectors (LRT, DP-TBD, Transformer) have no KF backend: "
+        "track error and ghost-track rate are not applicable. "
+        "All detectors evaluated at the same false-alarm rate (matched Pfa)."
     )
 
     st.divider()

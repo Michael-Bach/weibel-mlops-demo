@@ -1,5 +1,5 @@
 """
-Add LRT and DP-TBD Pd vs SNR columns to comparison_snr.csv
+Add LRT, DP-TBD, and Transformer Pd vs SNR columns to comparison_snr.csv
 and regenerate comparison_snr.png for the paper.
 
 Evaluation protocol (cell-level, oracle-window):
@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import yaml
+import onnxruntime as ort
 from scipy.ndimage import maximum_filter
 
 ROOT = Path(__file__).parent.parent
@@ -21,6 +22,10 @@ sys.path.insert(0, str(ROOT))
 
 from src.data.ppi_generator import generate_ppi_sequence, generate_clutter_only
 from src.baseline.ppi_cfar_kf import PPICFARDetector
+
+_tf_path   = ROOT / "artifacts/transformer_model.onnx"
+tf_session = ort.InferenceSession(str(_tf_path)) if _tf_path.exists() else None
+print(f"Transformer session: {'loaded' if tf_session else 'NOT FOUND'}")
 
 with open(ROOT / "params_ppi.yaml") as f:
     params = yaml.safe_load(f)
@@ -98,16 +103,35 @@ for _ in range(N_CAL):
 
 lrt_thr = float(np.percentile(lrt_ref_vals, 100 * (1.0 - cfar_pfa)))
 tbd_thr = float(np.percentile(tbd_ref_vals, 100 * (1.0 - cfar_pfa)))
-print(f"  LRT threshold = {lrt_thr:.4f}   DP-TBD threshold = {tbd_thr:.4f}")
+
+# Transformer threshold: calibrated the same way
+if tf_session is not None:
+    tf_ref_vals = []
+    rng_cal3 = np.random.default_rng(42)
+    for _ in range(N_CAL):
+        seed  = int(rng_cal3.integers(1, 1_000_000))
+        ppi_c = generate_clutter_only(params, seed=seed)
+        nf    = np.percentile(ppi_c, 10, axis=(0, 1), keepdims=True).clip(1e-3)
+        stack = (ppi_c / nf).clip(0, 30).astype(np.float32)[np.newaxis]
+        tf_map = tf_session.run(None, {"ppi_stack": stack})[0][0]
+        tf_path_max = 0.0
+        for _ in range(N_SW):
+            az_r = int(rng_cal3.integers(0, N_AZ))
+            r_r  = int(rng_cal3.integers(W, N_RANGE - W))
+            tf_path_max = max(tf_path_max, _window_max(tf_map, az_r, r_r))
+        tf_ref_vals.append(tf_path_max)
+    tf_thr = float(np.percentile(tf_ref_vals, 100 * (1.0 - cfar_pfa)))
+else:
+    tf_thr = 0.5
+print(f"  LRT thr={lrt_thr:.3f}  TBD thr={tbd_thr:.3f}  TF thr={tf_thr:.3f}")
 
 # ── Step 3: Pd vs SNR sweep ──────────────────────────────────────────────────
 snr_vals = np.linspace(-20, 40, 16)
-lrt_pd   = []
-tbd_pd   = []
+lrt_pd, tbd_pd, tf_pd = [], [], []
 
 for snr in snr_vals:
     rng = np.random.default_rng(abs(int(snr * 100)) + 2007)
-    lrt_hits = tbd_hits = 0
+    lrt_hits = tbd_hits = tf_hits = 0
 
     for _ in range(N_TRIALS):
         seed = int(rng.integers(1, 1_000_000))
@@ -124,17 +148,16 @@ for snr in snr_vals:
         ppi_t, _, _ = generate_ppi_sequence(p, seed=seed)
         tgt = p["target"]
 
-        # Oracle: mean target position across all sweeps
-        r_positions  = [tgt["range_bin"]    + sw * tgt["radial_velocity"]     for sw in range(N_SW)]
-        az_positions = [(tgt["azimuth_deg"] + sw * tgt["tangential_velocity"]) % 360 for sw in range(N_SW)]
-        r_mean  = int(np.clip(round(np.mean(r_positions)), 0, N_RANGE - 1))
-        az_mean = int(round(np.mean([a / 360 * N_AZ for a in az_positions]))) % N_AZ
-
         lm = _lrt(ppi_t)
         tm = _tbd(ppi_t)
+        if tf_session is not None:
+            nf     = np.percentile(ppi_t, 10, axis=(0, 1), keepdims=True).clip(1e-3)
+            stack  = (ppi_t / nf).clip(0, 30).astype(np.float32)[np.newaxis]
+            tf_map = tf_session.run(None, {"ppi_stack": stack})[0][0]
+        else:
+            tf_map = None
 
-        # Oracle: max window score across all 10 sweep positions
-        lrt_best = tbd_best = 0.0
+        lrt_best = tbd_best = tf_best = 0.0
         for sw in range(N_SW):
             r_sw  = float(tgt["range_bin"])  + sw * float(tgt["radial_velocity"])
             az_sw = (float(tgt["azimuth_deg"]) + sw * float(tgt["tangential_velocity"])) % 360.0
@@ -142,21 +165,24 @@ for snr in snr_vals:
             r_b   = int(np.clip(round(r_sw), 0, N_RANGE - 1))
             lrt_best = max(lrt_best, _window_max(lm, az_b, r_b))
             tbd_best = max(tbd_best, _window_max(tm, az_b, r_b))
+            if tf_map is not None:
+                tf_best = max(tf_best, _window_max(tf_map, az_b, r_b))
 
-        if lrt_best > lrt_thr:
-            lrt_hits += 1
-        if tbd_best > tbd_thr:
-            tbd_hits += 1
+        if lrt_best > lrt_thr: lrt_hits += 1
+        if tbd_best > tbd_thr: tbd_hits += 1
+        if tf_best  > tf_thr:  tf_hits  += 1
 
     lrt_pd.append(lrt_hits / N_TRIALS)
     tbd_pd.append(tbd_hits / N_TRIALS)
-    print(f"  SNR {snr:+5.1f} dB  LRT Pd={lrt_hits/N_TRIALS:.2f}  TBD Pd={tbd_hits/N_TRIALS:.2f}")
+    tf_pd.append(tf_hits   / N_TRIALS)
+    print(f"  SNR {snr:+5.1f} dB  LRT={lrt_hits/N_TRIALS:.2f}  TBD={tbd_hits/N_TRIALS:.2f}  TF={tf_hits/N_TRIALS:.2f}")
 
 # ── Step 4: merge into CSV ───────────────────────────────────────────────────
 csv_path = ROOT / "artifacts" / "comparison_snr.csv"
 df = pd.read_csv(csv_path)
-df["lrt_pd"]    = lrt_pd
-df["dptbd_pd"]  = tbd_pd
+df["lrt_pd"]         = lrt_pd
+df["dptbd_pd"]       = tbd_pd
+df["transformer_pd"] = tf_pd
 df.to_csv(csv_path, index=False)
 print(f"Saved updated CSV: {csv_path}")
 
@@ -172,10 +198,12 @@ ax.plot(snr_vals, df["cnn_kf_pd"]   * 100, color="#ffe66d",  lw=2.5,
         marker="s", markersize=5, label="CNN + KF")
 ax.plot(snr_vals, df["gru_kf_pd"]   * 100, color="#c084fc",  lw=3.0,
         marker="D", markersize=6, label="ConvGRU + KF")
-ax.plot(snr_vals, df["lrt_pd"]      * 100, color="#2ecc71",  lw=2.0, ls="-.",
-        marker="^", markersize=5, label="LRT (non-coh.)")
-ax.plot(snr_vals, df["dptbd_pd"]    * 100, color="#e74c3c",  lw=2.0, ls="-.",
-        marker="v", markersize=5, label="DP-TBD")
+ax.plot(snr_vals, df["lrt_pd"]         * 100, color="#2ecc71",  lw=2.0, ls="-.",
+        marker="^", markersize=5, label="LRT (non-coh.)  [cell]")
+ax.plot(snr_vals, df["dptbd_pd"]       * 100, color="#e74c3c",  lw=2.0, ls="-.",
+        marker="v", markersize=5, label="DP-TBD  [cell]")
+ax.plot(snr_vals, df["transformer_pd"] * 100, color="#f39c12",  lw=2.0, ls="-.",
+        marker="*", markersize=7, label="Transformer  [cell]")
 
 ax.set_xlabel("SNR (dB)", color="white")
 ax.set_ylabel("Probability of Detection (%)", color="white")
@@ -186,8 +214,9 @@ for spine in ax.spines.values():
     spine.set_edgecolor("#444")
 ax.legend(fontsize=9, facecolor="#1a1a2e", labelcolor="white",
           edgecolor="#444", loc="upper left")
-ax.set_title("Pd vs SNR — all five detectors (30 trials/point)",
-             color="white", fontsize=12)
+ax.set_title("Pd vs SNR — all six detectors (30 trials/point;\n"
+             "solid = confirmed track, dash-dot = cell-level)",
+             color="white", fontsize=11)
 
 fig.tight_layout()
 out = ROOT / "artifacts" / "comparison_snr.png"
@@ -197,11 +226,12 @@ print(f"Saved: {out}")
 
 # ── Step 6: print Table I numbers ───────────────────────────────────────────
 print("\nTable I — Pd at representative SNR points:")
-print(f"{'SNR':>6}  {'CFAR+KF':>8}  {'CNN+KF':>8}  {'GRU+KF':>8}  {'LRT':>8}  {'DP-TBD':>8}")
+print(f"{'SNR':>6}  {'CFAR+KF':>8}  {'CNN+KF':>8}  {'GRU+KF':>8}  {'LRT':>8}  {'DP-TBD':>8}  {'TF':>8}")
 for _, row in df[df["snr_db"].isin([-4, 0, 4, 8, 12])].iterrows():
     print(f"{row['snr_db']:>+6.0f}  "
           f"{row['cfar_kf_pd']*100:>7.1f}%  "
           f"{row['cnn_kf_pd']*100:>7.1f}%  "
           f"{row['gru_kf_pd']*100:>7.1f}%  "
           f"{row['lrt_pd']*100:>7.1f}%  "
-          f"{row['dptbd_pd']*100:>7.1f}%")
+          f"{row['dptbd_pd']*100:>7.1f}%  "
+          f"{row['transformer_pd']*100:>7.1f}%")
