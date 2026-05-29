@@ -359,7 +359,7 @@ and decays where no evidence is seen — visible in real time on the PPI display
         )
 
     # ── 7. LRT — non-coherent integrator ───────────────────────────────────────
-    with st.expander("7 · Likelihood Ratio Test — non-coherent square-law integrator", expanded=False):
+    with st.expander("7 · Likelihood Ratio Test — non-coherent square-law integrator", expanded=True):
         st.markdown(r"""
 ### Neyman-Pearson optimal detector
 
@@ -427,7 +427,7 @@ In this demo $N = 10$, so the theoretical gain is $10\,\log_{10}(10) \approx +10
         )
 
     # ── 8. DP-TBD ───────────────────────────────────────────────────────────────
-    with st.expander("8 · Dynamic-programming Track-Before-Detect (DP-TBD)", expanded=False):
+    with st.expander("8 · Dynamic-programming Track-Before-Detect (DP-TBD)", expanded=True):
         st.markdown(r"""
 ### Motivation
 

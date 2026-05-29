@@ -355,15 +355,18 @@ def live_ppi_fig(s: dict) -> go.Figure:
             showlegend=False,
         ))
 
-    # True target ground-truth positions (coloured circles + ID label)
+    # True target ground-truth positions (coloured circles + ID label).
+    # Use sw-1 because sweep_count was incremented by the last tick, so the
+    # algorithms last saw the target one sweep earlier.
     from radar.live import _live_tgt_pos
+    display_sw = max(0, sw - 1)
     for tgt in s["targets"]:
-        az_t, r_t = _live_tgt_pos(tgt, sw)
+        az_t, r_t = _live_tgt_pos(tgt, display_sw)
         if not (0 <= r_t < N_RANGE):
             continue
         x, y  = az_r_to_px(az_t, r_t)
         color = _TGT_COLORS[tgt["id"] % len(_TGT_COLORS)]
-        age   = sw - tgt["born"]
+        age   = display_sw - tgt["born"]
         fig.add_trace(go.Scatter(
             x=[x], y=[y], mode="markers+text",
             marker=dict(color=color, size=11, symbol="circle",
@@ -493,5 +496,72 @@ def live_conf_fig(s: dict) -> go.Figure:
                    gridcolor=GRID_C, zeroline=False, color="white"),
         legend=dict(font=dict(color="white"), bgcolor="rgba(0,0,0,0)",
                     orientation="h", y=1.15, x=0),
+    )
+    return fig
+
+
+def live_gru_heatmap_fig(s: dict) -> go.Figure:
+    """
+    Full-scene GRU hidden-state heatmap for the live radar tab.
+    Shows h[az, r] ∈ [0,1] across the whole PPI grid, with true target
+    positions overlaid.  Unlike the PPI-display 10-panel evolution, this
+    is the single accumulated belief map at the current sweep — it
+    integrates evidence from all sweeps seen so far.
+    """
+    from radar.live import _live_tgt_pos
+    from radar.sessions import _TGT_COLORS
+
+    sw      = max(0, s["sweep_count"] - 1)
+    h_map   = s["last_gru_map"]          # (n_az, n_range)  float32 [0,1]
+    GRID_C  = "rgba(128,128,128,0.15)"
+
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(
+        z=h_map,
+        colorscale="Plasma",
+        zmin=0, zmax=1,
+        colorbar=dict(
+            title=dict(text="h  (confidence)", font=dict(color="white", size=11)),
+            tickfont=dict(color="white", size=9),
+            thickness=12,
+        ),
+        hovertemplate="az bin=%{y}  range bin=%{x}  h=%{z:.3f}<extra></extra>",
+    ))
+
+    # True target positions
+    for tgt in s["targets"]:
+        az_t, r_t = _live_tgt_pos(tgt, sw)
+        if not (0 <= r_t < N_RANGE):
+            continue
+        az_b  = int(az_t / 360 * N_AZ) % N_AZ
+        color = _TGT_COLORS[tgt["id"] % len(_TGT_COLORS)]
+        fig.add_trace(go.Scatter(
+            x=[int(np.clip(r_t, 0, N_RANGE - 1))],
+            y=[az_b],
+            mode="markers+text",
+            marker=dict(symbol="x", size=10, color=color,
+                        line=dict(width=2, color=color)),
+            text=[f"#{tgt['id']}"],
+            textposition="top center",
+            textfont=dict(color=color, size=9),
+            showlegend=False,
+            hovertemplate=(
+                f"Target #{tgt['id']}<br>"
+                f"SNR {tgt['snr_db']:.0f} dB<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        height=260,
+        margin=dict(l=48, r=80, t=40, b=36),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        title=dict(
+            text=f"GRU hidden state h — accumulated belief after sweep {s['sweep_count']}",
+            font=dict(color="#aaa", size=12),
+        ),
+        xaxis=dict(title="Range bin", gridcolor=GRID_C, zeroline=False,
+                   color="white", range=[0, N_RANGE - 1]),
+        yaxis=dict(title="Azimuth bin", gridcolor=GRID_C, zeroline=False,
+                   color="white", range=[0, N_AZ - 1]),
     )
     return fig

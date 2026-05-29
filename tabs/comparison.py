@@ -15,7 +15,7 @@ from radar.detection import (
 )
 
 
-def render(snr_db: float):
+def render():
     # ── Operating-point calibration (run once, cached) ────────────────────────
     cfar_pfa, cnn_thr, cfar_kf_ftr, cnn_kf_ftr, gru_thr, gru_kf_ftr = _calibrate_pfa()
 
@@ -272,7 +272,7 @@ def render(snr_db: float):
 
     col_sp_snr, _ = st.columns([1, 3])
     with col_sp_snr:
-        sweep_snr = st.slider("SNR (dB)", -20.0, 40.0, float(snr_db), 1.0,
+        sweep_snr = st.slider("SNR (dB)", -20.0, 40.0, 10.0, 1.0,
                               key="sweep_snr",
                               help="SNR for the per-sweep comparison")
 

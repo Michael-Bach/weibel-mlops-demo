@@ -7,7 +7,7 @@ import streamlit as st
 
 from radar.sessions import _TGT_COLORS
 from radar.live import live_init, live_tick
-from components.charts import live_ppi_fig, live_conf_fig
+from components.charts import live_ppi_fig, live_conf_fig, live_gru_heatmap_fig
 
 
 def _lat_str(conf_dict: dict, key: str) -> str:
@@ -48,6 +48,7 @@ def render():
     with col_live_scope:
         live_scope_ph = st.empty()
         live_conf_ph  = st.empty()
+        live_gru_ph   = st.empty()
 
     with col_live_info:
         sw_now = s["sweep_count"]
@@ -115,6 +116,8 @@ def render():
                                key=f"live_ppi_{sw_now}")
     live_conf_ph.plotly_chart(live_conf_fig(s), use_container_width=True,
                               key=f"live_conf_{sw_now}")
+    live_gru_ph.plotly_chart(live_gru_heatmap_fig(s), use_container_width=True,
+                             key=f"live_gru_{sw_now}")
 
     # Tick and rerun if running
     if s["running"]:
