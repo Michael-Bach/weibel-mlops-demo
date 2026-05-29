@@ -338,13 +338,20 @@ def render():
 
 
 def _render_impl():
-    st.markdown("## Agentic MLOps: Claude-Powered Drift Advisor")
+    st.markdown("## Concept: Agentic MLOps Advisor")
     st.markdown(
-        "A Claude agent receives a fleet alert, autonomously queries PSI drift reports, "
-        "MLflow experiment history, and the model registry, then produces a specific operational "
-        "recommendation. Each scenario is designed to require a *different* response — "
-        "demonstrating that the agent can reason about the difference between a data problem, "
-        "an environmental shift, and a hardware fault."
+        "The pipeline described in the previous tab produces alerts — PSI spikes, accuracy regressions, "
+        "fleet drift reports. Someone or something still has to interpret them and decide what to do. "
+        "This tab explores what it would look like to hand that reasoning step to an LLM-based agent: "
+        "give it access to the same tools an on-call engineer would use, and ask it to "
+        "produce a justified, specific recommendation rather than just a number."
+    )
+    st.info(
+        "**Exploratory prototype** — the tools the agent calls are simulated backends backed by "
+        "the same PSI and MLflow logic from the pipeline tab. The agent itself is real: "
+        "Claude Haiku with tool use, running live against the Anthropic API. "
+        "The four scenarios are designed so each requires a *different* response — "
+        "distinguishing a data problem from an environmental shift from a hardware fault."
     )
 
     # ── Dependency check ──────────────────────────────────────────────────────
@@ -374,7 +381,7 @@ def _render_impl():
     st.divider()
 
     # ── Scenario selector ─────────────────────────────────────────────────────
-    st.markdown("### 1 — Choose a scenario")
+    st.markdown("### 1 — Choose a drift scenario")
     scenario_keys = list(_SCENARIOS.keys())
     selected = st.session_state.get("agent_scenario", "coastal_drift")
 
@@ -392,7 +399,7 @@ def _render_impl():
     st.caption(f"**{_SCENARIOS[selected]['description']}**")
 
     # ── Fleet snapshot ────────────────────────────────────────────────────────
-    st.markdown("### 2 — Current fleet snapshot")
+    st.markdown("### 2 — Simulated fleet snapshot")
     fleet = _SCENARIOS[selected]["fleet"]
     status_icon = {"ok": "🟢", "warn": "🟡", "alert": "🔴"}
     cols = st.columns(len(fleet))
@@ -408,7 +415,8 @@ def _render_impl():
     st.divider()
 
     # ── Agent section ─────────────────────────────────────────────────────────
-    st.markdown("### 3 — Agent reasoning trace")
+    st.markdown("### 3 — Agent reasoning trace"
+    "\n*Watch the agent call tools, observe results, and build its recommendation step by step.*")
 
     run_btn = st.button("▶  Run Agent", type="primary", key="agent_run_btn")
 
@@ -427,23 +435,24 @@ def _render_impl():
     st.divider()
 
     # ── Explainer ─────────────────────────────────────────────────────────────
-    st.markdown("### What this demonstrates")
+    st.markdown("### Why I think this is worth building")
     col_l, col_r = st.columns(2)
     with col_l:
-        st.markdown("**Agentic patterns shown**")
+        st.markdown("**The agentic patterns it would demonstrate**")
         st.markdown(
-            "- **Tool use**: the agent calls real APIs (PSI monitor, MLflow, model registry) "
-            "rather than relying on static context\n"
-            "- **Multi-step reasoning**: fleet-wide check first → drill into specific units → "
-            "inspect training history → form recommendation\n"
-            "- **Domain-aware decisions**: distinguishes hardware fault (PSI 0.67, single unit) "
-            "from environmental drift (PSI 0.22–0.34, shared environment) "
-            "from new drone type (fleet-wide centroid shift) — each requires a different response\n"
-            "- **Grounded output**: every recommendation cites PSI numbers, unit IDs, "
-            "model versions, and training data provenance"
+            "- **Tool use over static context**: the agent queries live state rather than "
+            "summarising a fixed dashboard — it sees what an engineer would see\n"
+            "- **Multi-step investigative reasoning**: fleet-wide check first → drill into "
+            "specific units → inspect training history → form recommendation. "
+            "That sequence matters; doing it in the wrong order wastes tool calls\n"
+            "- **Domain-aware triage**: the system prompt encodes the key distinction — "
+            "PSI 0.67 on a single unit after a physical remount is a hardware problem, "
+            "not a retraining problem. An LLM with the right context can make that call\n"
+            "- **Auditable reasoning**: every recommendation in the trace is grounded in "
+            "specific numbers and unit IDs, not vague advice — making human review fast"
         )
     with col_r:
-        st.markdown("**Production integration**")
+        st.markdown("**How it would slot into the proposed pipeline**")
         st.code(
             "# PSI monitor fires on cron schedule\n"
             "report = drift_detect.run_fleet_check()\n"
@@ -458,8 +467,13 @@ def _render_impl():
             "            get_model_registry,\n"
             "        ],\n"
             "    )\n"
-            "    # Post to ops channel / ticketing system\n"
+            "    # Draft posted to ops channel for human approval\n"
             "    ops.notify(rec)\n"
-            "    # Human approves → pipeline retrain triggered",
+            "    # Human approves → retraining or rollback triggered\n"
+            "    # Agent recommendation stored in audit log",
             language="python",
+        )
+        st.caption(
+            "The agent would sit between the automated PSI alert and the human decision — "
+            "reducing the cognitive load of on-call review without removing the human from the loop."
         )
