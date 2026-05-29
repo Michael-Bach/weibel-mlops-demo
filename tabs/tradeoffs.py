@@ -114,9 +114,6 @@ def render():
 
         st.info("**Best role:** early-warning and long-range surveillance where low SNR sensitivity and streaming latency are the primary requirements.")
 
-    with col_cfar:   # reuse the 4th column slot
-        pass
-
     # ── Transformer card ───────────────────────────────────────────────────────
     st.divider()
     col_tf, col_gap = st.columns([2, 1])

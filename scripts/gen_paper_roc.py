@@ -1,4 +1,4 @@
-"""Generate ROC curves for the paper: CFAR, CNN, GRU, LRT, DP-TBD at SNR = 0, 3, 6 dB."""
+"""Generate ROC curves for the paper: CFAR, CNN, GRU, LRT, DP-TBD, PPI-TF at SNR = 0, 3, 6 dB."""
 import sys
 from pathlib import Path
 import numpy as np
@@ -16,12 +16,13 @@ from src.baseline.ppi_cfar_kf import PPICFARDetector
 
 
 def _lrt_score(ppi: np.ndarray) -> np.ndarray:
-    nf = np.percentile(ppi, 10, axis=(1, 2), keepdims=True).clip(1e-6)
+    # axis=(0,1) → per-range-bin floor (range-invariant)
+    nf = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-6)
     return ((ppi / nf) ** 2).sum(axis=0)
 
 
 def _dp_tbd_score(ppi: np.ndarray, max_vr: int = 3, max_vaz: int = 2) -> np.ndarray:
-    nf     = np.percentile(ppi, 10, axis=(1, 2), keepdims=True).clip(1e-6)
+    nf     = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-6)
     normed = (ppi / nf).astype(np.float32)
     S      = normed[0].copy()
     size   = (2 * max_vaz + 1, 2 * max_vr + 1)
@@ -42,6 +43,8 @@ N_RANGE = params["radar"]["n_ranges"]
 
 cnn_session = ort.InferenceSession(str(ROOT / "artifacts/ppi_model.onnx"))
 gru_session = ort.InferenceSession(str(ROOT / "artifacts/recurrent_model.onnx"))
+_tf_path    = ROOT / "artifacts/transformer_model.onnx"
+tf_session  = ort.InferenceSession(str(_tf_path)) if _tf_path.exists() else None
 
 
 def _roc(scores, labels):
@@ -68,7 +71,7 @@ def _roc(scores, labels):
 def collect_scores(snr_db: float):
     rng    = np.random.default_rng(SEED_BASE + int(snr_db * 10))
     cfar_d = PPICFARDetector()
-    cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, labs = [], [], [], [], [], []
+    cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, tf_sc, labs = [], [], [], [], [], [], []
 
     for i in range(N_TRIALS):
         has_t = (i % 2 == 0)
@@ -106,6 +109,14 @@ def collect_scores(snr_db: float):
         lrt_map    = _lrt_score(ppi)
         tbd_map    = _dp_tbd_score(ppi)
 
+        # Transformer: normalise stack and run session
+        if tf_session is not None:
+            nf      = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-3)
+            stack   = (ppi / nf).clip(0, 30).astype(np.float32)[np.newaxis]
+            tf_map  = tf_session.run(None, {"ppi_stack": stack})[0][0]
+        else:
+            tf_map  = np.zeros((N_AZ, N_RANGE), dtype=np.float32)
+
         W = 5
         if has_t:
             az_i = int(round(tgt_az)) % N_AZ
@@ -121,6 +132,7 @@ def collect_scores(snr_db: float):
         gru_sc.append(float(gru_map[az_idx, r_lo:r_hi].max()))
         lrt_sc.append(float(lrt_map[az_idx, r_lo:r_hi].max()))
         tbd_sc.append(float(tbd_map[az_idx, r_lo:r_hi].max()))
+        tf_sc.append(float(tf_map[az_idx, r_lo:r_hi].max()))
 
         cfar_near = sum(
             1 for sw in range(N_SW) if detect_seq[sw][az_idx, r_lo:r_hi].any()
@@ -128,7 +140,7 @@ def collect_scores(snr_db: float):
         cfar_sc.append(cfar_near / N_SW)
         labs.append(int(has_t))
 
-    return cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, labs
+    return cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, tf_sc, labs
 
 
 auc_table = {}   # {snr: {method: auc}}
@@ -137,15 +149,16 @@ fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
 
 for ax, snr in zip(axes, SNR_LIST):
     print(f"SNR = {snr:+.0f} dB ...")
-    cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, labs = collect_scores(snr)
+    cnn_sc, gru_sc, cfar_sc, lrt_sc, tbd_sc, tf_sc, labs = collect_scores(snr)
 
     cf_fpr,  cf_tpr,  cf_auc  = _roc(cfar_sc, labs)
     cnn_fpr, cnn_tpr, cnn_auc = _roc(cnn_sc,  labs)
     gru_fpr, gru_tpr, gru_auc = _roc(gru_sc,  labs)
     lrt_fpr, lrt_tpr, lrt_auc = _roc(lrt_sc,  labs)
     tbd_fpr, tbd_tpr, tbd_auc = _roc(tbd_sc,  labs)
+    tf_fpr,  tf_tpr,  tf_auc  = _roc(tf_sc,   labs)
     auc_table[snr] = dict(cfar=cf_auc, cnn=cnn_auc, gru=gru_auc,
-                          lrt=lrt_auc, tbd=tbd_auc)
+                          lrt=lrt_auc, tbd=tbd_auc, tf=tf_auc)
 
     ax.plot([0, 1], [0, 1], "k--", lw=1, label="Chance (0.500)")
     ax.plot(cf_fpr,  cf_tpr,  color="white",    lw=2.0, ls="--",
@@ -154,6 +167,8 @@ for ax, snr in zip(axes, SNR_LIST):
             label=f"CNN       AUC {cnn_auc:.3f}")
     ax.plot(gru_fpr, gru_tpr, color="magenta",  lw=2.0,
             label=f"ConvGRU   AUC {gru_auc:.3f}")
+    ax.plot(tf_fpr,  tf_tpr,  color="#f39c12",  lw=2.0,
+            label=f"Transf.   AUC {tf_auc:.3f}")
     ax.plot(lrt_fpr, lrt_tpr, color="#2ecc71",  lw=2.0, ls="-.",
             label=f"LRT (n-c) AUC {lrt_auc:.3f}")
     ax.plot(tbd_fpr, tbd_tpr, color="#e74c3c",  lw=2.0, ls="-.",
@@ -177,15 +192,15 @@ for ax in axes:
     for spine in ax.spines.values():
         spine.set_edgecolor("#444")
 fig.suptitle(
-    "ROC curves — CNN, ConvGRU, CA-CFAR, LRT, DP-TBD  (PPI detector scores)",
+    "ROC curves — CNN, ConvGRU, Transformer, CA-CFAR, LRT, DP-TBD",
     fontsize=12, y=1.01, color="white"
 )
 
 print("\nAUC table:")
-print(f"{'SNR':>6}  {'CFAR':>6}  {'CNN':>6}  {'GRU':>6}  {'LRT':>6}  {'TBD':>6}")
+print(f"{'SNR':>6}  {'CFAR':>6}  {'CNN':>6}  {'GRU':>6}  {'TF':>6}  {'LRT':>6}  {'TBD':>6}")
 for snr in SNR_LIST:
     d = auc_table[snr]
-    print(f"{snr:>+6.0f}  {d['cfar']:.3f}   {d['cnn']:.3f}   {d['gru']:.3f}   {d['lrt']:.3f}   {d['tbd']:.3f}")
+    print(f"{snr:>+6.0f}  {d['cfar']:.3f}   {d['cnn']:.3f}   {d['gru']:.3f}   {d['tf']:.3f}   {d['lrt']:.3f}   {d['tbd']:.3f}")
 
 fig.tight_layout()
 out = ROOT / "artifacts" / "paper_roc.png"
