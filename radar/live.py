@@ -147,3 +147,8 @@ def _live_tick():
 
     s["frame_s"]     = float(rng.uniform(_LIVE_FRAME_LO, _LIVE_FRAME_HI))
     s["sweep_count"] += 1
+
+
+# Public aliases used by tabs/live_radar.py
+live_init = _live_init
+live_tick = _live_tick
