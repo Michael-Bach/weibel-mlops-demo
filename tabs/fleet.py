@@ -192,190 +192,266 @@ def _event_log(seed: int) -> list[tuple]:
     return [_EVENTS[i] for i in sorted(idx)]
 
 
+def _triad_fig() -> go.Figure:
+    """Triangle diagram: three data sources converging on the training hub."""
+
+    # Vertex positions (equilateral triangle, hub at centroid)
+    SX,  SY  =  0.0,  2.6   # Synthetic — top
+    TX,  TY  = -2.3, -1.3   # Test range — bottom-left
+    FX,  FY  =  2.3, -1.3   # Fleet live  — bottom-right
+    HX,  HY  =  0.0,  0.0   # Hub — centre
+
+    C_SYN  = "#3498db"   # blue
+    C_RNG  = "#f39c12"   # gold
+    C_FLT  = "#9b59b6"   # purple
+    C_HUB  = "#ecf0f1"   # light
+
+    fig = go.Figure()
+
+    # Triangle outline (faint background)
+    fig.add_trace(go.Scatter(
+        x=[SX, TX, FX, SX], y=[SY, TY, FY, SY],
+        mode="lines",
+        line=dict(color="rgba(200,200,200,0.10)", width=1, dash="dot"),
+        showlegend=False, hoverinfo="skip",
+    ))
+
+    # Arrows: each vertex → hub
+    for (ax, ay, color) in [(SX, SY, C_SYN), (TX, TY, C_RNG), (FX, FY, C_FLT)]:
+        # Draw line from vertex to hub, stopping short so the node marker shows
+        t = 0.72  # stop at 72% of the way (leaves room for hub marker)
+        ex = ax + t * (HX - ax)
+        ey = ay + t * (HY - ay)
+        fig.add_annotation(
+            x=ex, y=ey, ax=ax, ay=ay,
+            xref="x", yref="y", axref="x", ayref="y",
+            showarrow=True, arrowhead=3, arrowwidth=2.5,
+            arrowcolor=color, arrowsize=1.3,
+        )
+
+    # Arrow: hub → fleet (downward, deployment)
+    fig.add_annotation(
+        x=HX, y=HY - 1.8, ax=HX, ay=HY - 0.55,
+        xref="x", yref="y", axref="x", ayref="y",
+        showarrow=True, arrowhead=3, arrowwidth=2.5,
+        arrowcolor=C_HUB, arrowsize=1.3,
+    )
+    fig.add_annotation(
+        x=HX, y=HY - 2.1,
+        text="<b>XENTA Fleet</b><br><span style='font-size:10px'>ONNX v8 · OTA push</span>",
+        showarrow=False, font=dict(color=C_HUB, size=11), align="center",
+    )
+
+    # Vertex nodes
+    for (vx, vy, color, label, sublabel) in [
+        (SX, SY, C_SYN,
+         "🔵  Synthetic Runs",
+         "Physics simulator · continuous<br>Parameterisable · reproducible<br>Unlimited scale"),
+        (TX, TY, C_RNG,
+         "🟡  Test Range",
+         "Instrumentation radar TSPI<br>Sub-cm ground truth labels<br>New drone type capture"),
+        (FX, FY, C_FLT,
+         "🟣  Fleet Live Data",
+         "All environments simultaneously<br>PSI drift detection<br>Experience replay buffer"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=[vx], y=[vy], mode="markers",
+            marker=dict(size=52, color=color, opacity=0.92,
+                        line=dict(color="white", width=2)),
+            showlegend=False, hoverinfo="skip",
+        ))
+        # Label above/below node
+        lpos = "top center" if vy > 0 else "bottom center"
+        fig.add_annotation(
+            x=vx, y=vy,
+            text=f"<b>{label}</b>",
+            showarrow=False, font=dict(color="white", size=11), align="center",
+        )
+        # Sub-label offset outward from hub
+        ox = (vx - HX) * 0.55
+        oy = (vy - HY) * 0.55
+        fig.add_annotation(
+            x=vx + ox, y=vy + oy,
+            text=f"<span style='font-size:9px;color:#ccc'>{sublabel}</span>",
+            showarrow=False, align="center",
+        )
+
+    # Hub node
+    fig.add_trace(go.Scatter(
+        x=[HX], y=[HY], mode="markers",
+        marker=dict(size=60, color="#2c3e50", opacity=0.97,
+                    line=dict(color=C_HUB, width=3)),
+        showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_annotation(
+        x=HX, y=HY,
+        text="<b>Training Hub</b><br><span style='font-size:9px'>MLflow · DVC · Accuracy gate</span>",
+        showarrow=False, font=dict(color="white", size=10), align="center",
+    )
+
+    fig.update_layout(
+        height=480,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False, range=[-3.8, 3.8]),
+        yaxis=dict(visible=False, range=[-3.2, 3.8], scaleanchor="x"),
+        margin=dict(t=10, b=10, l=10, r=10),
+    )
+    return fig
+
+
 # ── Main render ───────────────────────────────────────────────────────────────
 
 def render():
     st.markdown("## Proposed: Continuous Fleet Learning")
     st.markdown(
-        "Each XENTA unit in the field sees a slightly different world — different coastlines, "
-        "different drone types, different clutter. The idea behind this architecture is that "
-        "the fleet's collective experience becomes the training set: data flows inward to a "
-        "central hub, models improve, and updated ONNX artifacts push back out. "
-        "Every new drone type one unit encounters eventually makes the whole fleet smarter."
+        "The proposed training pipeline draws from three complementary data sources simultaneously. "
+        "No single source is sufficient on its own: synthetic data covers the full parameter space "
+        "but misses real hardware; test-range data provides precision labels but is expensive to collect; "
+        "fleet live data reflects the true operational distribution but lacks ground-truth labels. "
+        "Together they form a self-reinforcing triad — each source compensating for the others' gaps."
     )
     st.info(
-        "**Proposed design** — the visualisation below shows what this loop would look like in operation. "
-        "Unit positions are illustrative; colors show the current PSI status from the simulated scenarios "
-        "in the Agent tab. Drone detections are simulated examples of the classification output."
+        "**Proposed design** — the diagram and sections below describe the intended architecture. "
+        "The training run and model artifacts in the Pipeline tab are real; the fleet and monitoring "
+        "loop are the proposed additions this architecture would enable."
     )
 
     st.divider()
 
-    # ── Fleet diagram ─────────────────────────────────────────────────────────
-    st.markdown("### The learning loop")
+    # ── Triad diagram ─────────────────────────────────────────────────────────
+    st.markdown("### Three data sources — one training hub")
+    st.plotly_chart(_triad_fig(), use_container_width=True)
+
+    st.divider()
+
+    # ── Three source deep-dives ───────────────────────────────────────────────
+    col_a, col_b, col_c = st.columns(3)
+
+    with col_a:
+        st.markdown("#### 🔵 Synthetic training runs")
+        st.markdown(
+            "The physics simulator runs continuously, producing PPI sequences across the full "
+            "operational envelope — SNR from −20 to +40 dB, all aspect angles, random velocities, "
+            "every clutter type in the parameter library. "
+            "This is the backbone of the training set: unlimited scale, fully reproducible via DVC seed, "
+            "and the only source that can guarantee coverage of rare but important conditions "
+            "(e.g. head-on approach at −15 dB SNR in sea-state 4 clutter)."
+        )
+        st.markdown(
+            "**Synthetic multiplication of new captures:** when a new drone type is confirmed "
+            "at the test range, the simulator extracts its physical signature — rotor frequency, "
+            "RCS, micro-Doppler bandwidth — and generates thousands of synthetic variants. "
+            "A handful of real captures becomes a full training distribution."
+        )
+        st.code(
+            "synthetic_batch = generator.sample(\n"
+            "    drone_params  = extracted_signature,\n"
+            "    n_sequences   = 2000,       # 40–100× real captures\n"
+            "    snr_range_db  = (-20, 40),\n"
+            "    aspect_angles = 'uniform',\n"
+            "    clutter_types = ['rayleigh',\n"
+            "                     'sea-state-3',\n"
+            "                     'urban'],\n"
+            "    seed          = run_id,     # DVC reproducible\n"
+            ")",
+            language="python",
+        )
+
+    with col_b:
+        st.markdown("#### 🟡 Instrumentation test range")
+        st.markdown(
+            "Weibel's own MFCW instrumentation radars — the same systems deployed at missile "
+            "test ranges globally — act as the precision labelling engine. "
+            "A cooperative target (drone) flies through the range while the instrumentation radar "
+            "records its TSPI (Time Space Position Information) at sub-centimetre accuracy. "
+            "The co-located XENTA unit records the same scene through its own hardware. "
+            "Label fusion pairs the two: XENTA signal as feature, TSPI position as label."
+        )
+        st.markdown(
+            "**This is where instrument error gets absorbed.** "
+            "Because the label comes from the instrumentation radar — not the XENTA — "
+            "the model must learn to predict the true position from a distorted measurement. "
+            "Hardware imperfections (phase noise, ADC non-linearity, gain drift) are baked "
+            "into the input but not the label. The model corrects for them automatically."
+        )
+        st.markdown(
+            "**New drone types:** when a unit flags an unknown airframe, the test range "
+            "schedules a dedicated session. The resulting labelled sequences seed the "
+            "synthetic multiplication pipeline and are added to the experience buffer."
+        )
+
+    with col_c:
+        st.markdown("#### 🟣 Fleet live data")
+        st.markdown(
+            "Every deployed XENTA unit contributes to the training distribution continuously. "
+            "Confirmed detections (high-confidence classifications) are tagged with their "
+            "operating environment and uploaded to the hub. "
+            "This is the source the other two cannot replicate: the actual distribution of "
+            "real signals the model will face in production — coastal sea clutter, urban multipath, "
+            "border-terrain reflections, hardware aging, weather effects."
+        )
+        st.markdown(
+            "**PSI drift detection** monitors when the incoming distribution diverges from "
+            "the training reference. A fleet-wide simultaneous drift signals a new drone type; "
+            "a localised drift on units sharing an environment signals a clutter change. "
+            "Both trigger the appropriate response: test-range session or synthetic expansion."
+        )
+        st.markdown(
+            "**Experience replay:** confirmed detections are stored in a buffer and replayed "
+            "alongside fresh synthetic data throughout training. The model retains memory of "
+            "rare real events even as the synthetic dataset grows around them."
+        )
+
+    st.divider()
+
+    # ── Variation table ───────────────────────────────────────────────────────
+    st.markdown("### What the synthetic source covers that the others cannot")
+    st.markdown("""
+| Condition | Synthetic | Test Range | Fleet Live |
+|---|:---:|:---:|:---:|
+| Full SNR sweep (−20 to +40 dB) | ✓ unlimited | ✓ limited sessions | ✗ uncontrolled |
+| All aspect angles | ✓ | partial | ✗ |
+| Known clutter statistics | ✓ parameterised | ✓ controlled | ✗ unknown |
+| Real hardware imperfections | ✗ | ✓ per-unit | ✓ in-situ |
+| New drone types | ✗ | ✓ gold standard | ✓ discovered |
+| Operational clutter distribution | ✗ approximated | ✗ controlled env | ✓ real |
+| Unlimited scale | ✓ | ✗ expensive | ✗ rate-limited |
+| Reproducible (DVC seed) | ✓ | partial (TSPI log) | ✗ |
+    """)
+
+    st.divider()
+
+    # ── Fleet ring diagram ────────────────────────────────────────────────────
+    st.markdown("### Fleet live layer in detail")
+    st.caption("Each node is a deployed XENTA unit. Colours show current PSI status.")
 
     col_diag, col_key = st.columns([3, 1])
-
     with col_diag:
         st.plotly_chart(_fleet_fig(), use_container_width=True)
-
     with col_key:
         st.markdown("**Node colour**")
-        for status, color, label in [
-            ("ok",    "#2ecc71", "Stable (PSI < 0.10)"),
-            ("warn",  "#f39c12", "Warn (PSI 0.10–0.20)"),
-            ("alert", "#e74c3c", "Alert (PSI > 0.20)"),
+        for color, label in [
+            ("#2ecc71", "Stable  (PSI < 0.10)"),
+            ("#f39c12", "Warn    (PSI 0.10–0.20)"),
+            ("#e74c3c", "Alert   (PSI > 0.20)"),
         ]:
             st.markdown(
                 f"<span style='color:{color};font-size:18px'>●</span> {label}",
                 unsafe_allow_html=True,
             )
-
         st.markdown("**Flow lines**")
         st.markdown(
             "<span style='color:#f39c12'>▶ ···</span> Data upload  \n"
             "<span style='color:#c084fc'>▶ ───</span> Model push  \n"
-            "<span style='color:#888'>▶ ───</span> Idle connection",
+            "<span style='color:#888'>──────</span> Idle",
             unsafe_allow_html=True,
         )
-
         st.markdown("**Detections**")
         st.markdown(
             "<span style='color:#00ccff'>▲</span> Known — classified  \n"
             "<span style='color:#ffdd44'>▲</span> Unknown — queued",
             unsafe_allow_html=True,
         )
-
-        st.markdown("**The hub**")
-        st.markdown(
-            "Central training node: "
-            "MLflow tracks every run, "
-            "DVC versions the data, "
-            "accuracy gate blocks bad models, "
-            "ONNX artifacts push OTA."
-        )
-
-    st.divider()
-
-    # ── Why it compounds ──────────────────────────────────────────────────────
-    st.markdown("### Why it gets smarter over time")
-
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.markdown("**More units → more diversity**")
-        st.markdown(
-            "Each deployment environment contributes a distribution of signals the others "
-            "haven't seen: coastal sea clutter, urban multipath, border-terrain reflections. "
-            "A model trained on the union of these distributions is more robust than one "
-            "trained on any single environment."
-        )
-    with col_b:
-        st.markdown("**New drone types get absorbed**")
-        st.markdown(
-            "When a unit encounters an unknown airframe, it queues the detection for "
-            "test-range labelling. Once the new type is collected and labelled, "
-            "the pipeline retrains and pushes a model that recognises it fleet-wide — "
-            "not just to the unit that first saw it."
-        )
-    with col_c:
-        st.markdown("**Hardware variance gets averaged out**")
-        st.markdown(
-            "Pooling data across many units with different manufacturing tolerances "
-            "forces the model to learn features that generalise across hardware — "
-            "the learned representation becomes less dependent on any single unit's "
-            "specific antenna or ADC characteristics."
-        )
-
-    st.divider()
-
-    # ── Synthetic training and experience multiplication ───────────────────────
-    st.markdown("### Continuous synthetic training and experience multiplication")
-    st.markdown(
-        "Real field captures are scarce and expensive to label. "
-        "The proposed pipeline uses them as *seeds* for the physics-based simulator rather than "
-        "as the training set itself — turning a handful of real examples into thousands of "
-        "synthetic variations that cover conditions the field unit never happened to encounter."
-    )
-
-    col_s1, col_s2 = st.columns([5, 6])
-
-    with col_s1:
-        st.markdown("**Continuous background training**")
-        st.markdown(
-            "Even when no new real data arrives, the pipeline keeps training. "
-            "The synthetic generator runs continuously, producing fresh batches that sweep "
-            "the full SNR range (−20 to +40 dB), all aspect angles, random velocities, "
-            "and every clutter environment in the parameter library. "
-            "This prevents the model from drifting toward the narrow slice of conditions "
-            "it has seen in the most recent real captures."
-        )
-        st.markdown("**Experience replay**")
-        st.markdown(
-            "Every confirmed real detection is stored in the experience buffer with its "
-            "TSPI-derived label. Periodically, the training loop replays that buffer "
-            "alongside fresh synthetic data — the model is continuously reminded of "
-            "rare real-world events it would otherwise forget as the dataset grows."
-        )
-        st.markdown("**Synthetic multiplication of new captures**")
-        st.markdown(
-            "When a field unit encounters a drone type that is new to the training set, "
-            "a test-range session produces a small batch of labelled captures — "
-            "perhaps 20–50 sequences. The simulator extracts the key parameters from "
-            "those captures and generates thousands of synthetic variants, making the "
-            "model robust across conditions the test-range session did not cover."
-        )
-
-    with col_s2:
-        st.code(
-            "# When a new drone type is confirmed at the test range:\n"
-            "\n"
-            "# Step 1 — Extract physical signature from real captures\n"
-            "params = signature_extractor.fit(\n"
-            "    real_sequences,          # 20–50 labelled XENTA sequences\n"
-            "    instrumentation_tspi,    # ground-truth from range radar\n"
-            ")\n"
-            "# params now contains:\n"
-            "#   rotor_freq_hz     = 84.3   # blade-passing frequency\n"
-            "#   rcs_mean_dbsm     = -12.1  # radar cross-section\n"
-            "#   velocity_max_ms   = 28.0   # max speed observed\n"
-            "#   micro_doppler_bw  = 320    # Hz, rotor spread\n"
-            "\n"
-            "# Step 2 — Multiply synthetically\n"
-            "synthetic_batch = generator.sample(\n"
-            "    drone_params  = params,\n"
-            "    n_sequences   = 2000,      # 40–100× the real captures\n"
-            "    snr_range_db  = (-20, 40), # full operational envelope\n"
-            "    aspect_angles = 'uniform', # all directions\n"
-            "    clutter_types = ['rayleigh', 'sea-state-3', 'urban'],\n"
-            "    velocity_dist = 'uniform', # draw v from [0, v_max]\n"
-            "    seed          = run_id,    # reproducible via DVC\n"
-            ")\n"
-            "\n"
-            "# Step 3 — Mix with existing dataset and retrain\n"
-            "dataset = existing_data + real_captures + synthetic_batch\n"
-            "dvc repro  # pipeline picks up the new data automatically",
-            language="python",
-        )
-        st.caption(
-            "The simulator uses the same physics model as the base synthetic pipeline "
-            "(Rayleigh clutter, Gaussian beam, range-gate pulse) but with the new drone's "
-            "measured RCS and micro-Doppler parameters substituted in. "
-            "The result: a model that generalises to the new airframe across all SNR, "
-            "aspect, and clutter conditions — from 20–50 real captures."
-        )
-
-    st.markdown("**What gets varied in the synthetic expansion**")
-    st.markdown("""
-| Parameter | Range | Why it matters |
-|---|---|---|
-| **SNR** | −20 to +40 dB | Model must detect at long range (low SNR) and close range (high SNR) |
-| **Aspect angle** | 0–360° | RCS and micro-Doppler vary strongly with viewing angle |
-| **Radial velocity** | 0 to v_max | Hovering drone vs. fast-transit; different Doppler signature |
-| **Clutter type** | Rayleigh / sea / urban / terrain | Each environment the fleet operates in |
-| **Range** | 10–480 m | Near targets saturate ADC; far targets are near noise floor |
-| **Trajectory shape** | Linear / curved / hovering | Temporal evolution of position in PPI sequence |
-| **SNR jitter** | ±3 dB per sweep | Realistic fluctuation from aspect and scintillation |
-    """)
 
     st.divider()
 
