@@ -7,9 +7,141 @@ receiving updated ONNX models, and collectively classifying an ever-growing
 catalogue of drone types.
 """
 
+import json
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+
+# ── Drone knowledge base ─────────────────────────────────────────────────────
+
+_CATALOGUE = [
+    {"type": "DJI Mavic 3",    "first_seen": "2025-11-14", "seqs": 1200, "source": "syn + range", "confidence": 0.96, "status": "deployed"},
+    {"type": "DJI Spark",      "first_seen": "2025-12-03", "seqs":  980, "source": "syn + range", "confidence": 0.94, "status": "deployed"},
+    {"type": "DJI Matrice 4",  "first_seen": "2026-04-11", "seqs":  640, "source": "syn + range", "confidence": 0.92, "status": "deployed"},
+    {"type": "Autel EVO II",   "first_seen": "2026-01-18", "seqs":  312, "source": "syn + range", "confidence": 0.88, "status": "deployed"},
+    {"type": "FPV-250",        "first_seen": "2026-03-02", "seqs":   80, "source": "range only",  "confidence": 0.81, "status": "deployed",
+     "note": "⚠ limited coverage — syn expansion recommended"},
+    {"type": "Unknown-A",      "first_seen": "2026-05-21", "seqs":    0, "source": "—",           "confidence": None, "status": "queued",
+     "note": "Detected by C3-0042 — awaiting test-range session"},
+]
+
+_STATUS_BADGE = {
+    "deployed":  ("<span style='background:#2ecc71;color:#000;padding:2px 8px;"
+                  "border-radius:4px;font-size:11px;font-weight:600'>deployed</span>"),
+    "queued":    ("<span style='background:#e74c3c;color:#fff;padding:2px 8px;"
+                  "border-radius:4px;font-size:11px;font-weight:600'>queued</span>"),
+    "scheduled": ("<span style='background:#f39c12;color:#000;padding:2px 8px;"
+                  "border-radius:4px;font-size:11px;font-weight:600'>range scheduled</span>"),
+    "expanding": ("<span style='background:#3498db;color:#fff;padding:2px 8px;"
+                  "border-radius:4px;font-size:11px;font-weight:600'>syn expanding</span>"),
+    "deploying": ("<span style='background:#9b59b6;color:#fff;padding:2px 8px;"
+                  "border-radius:4px;font-size:11px;font-weight:600'>deploying</span>"),
+}
+
+def _conf_color(c):
+    if c is None:   return "#888"
+    if c >= 0.90:   return "#2ecc71"
+    if c >= 0.80:   return "#f39c12"
+    return "#e74c3c"
+
+def _coverage_bar(seqs: int, max_seqs: int = 1200) -> str:
+    pct = min(100, int(seqs / max_seqs * 100))
+    color = "#2ecc71" if pct >= 70 else "#f39c12" if pct >= 20 else "#e74c3c"
+    return (
+        f"<div style='background:#333;border-radius:3px;height:8px;width:100px;display:inline-block'>"
+        f"<div style='background:{color};height:8px;border-radius:3px;width:{pct}px'></div></div>"
+        f" <span style='color:#aaa;font-size:11px'>{seqs}</span>"
+    )
+
+def _knowledge_base_section():
+    """Render the drone knowledge base, augmented by any agent actions this session."""
+    st.markdown("### Fleet knowledge base — known drone catalogue")
+    st.caption(
+        "The collective knowledge of the fleet: every drone type the model has been trained to recognise, "
+        "how much training coverage it has, and its current fleet-wide detection confidence. "
+        "Run the **🌊 Coastal drift** or **🚁 New drone** scenario in the Agent tab to see the agent "
+        "update this catalogue in real time."
+    )
+
+    # Read any actions taken by the agent this session
+    actions = st.session_state.get("agent_actions", [])
+    scheduled_types  = set()
+    expanding_types  = set()
+    deploying_units  = []
+    for a in actions:
+        if a["tool"] == "schedule_test_range_session":
+            for d in a["inputs"].get("drone_types", []):
+                scheduled_types.add(d.lower())
+        if a["tool"] == "request_synthetic_expansion":
+            expanding_types.add(a["inputs"].get("drone_type", "").lower())
+        if a["tool"] == "deploy_model":
+            deploying_units.extend(a["inputs"].get("target_units", []))
+
+    # Build augmented catalogue
+    rows = ""
+    for entry in _CATALOGUE:
+        drone_lc = entry["type"].lower()
+        status = entry["status"]
+        # Override status if agent has acted on this type
+        if any(t in drone_lc or drone_lc in t for t in expanding_types):
+            status = "expanding"
+        elif any(t in drone_lc or drone_lc in t for t in scheduled_types):
+            status = "scheduled"
+        # Also flag if it's the "Unknown-A" and either action fired
+        if entry["status"] == "queued" and (scheduled_types or expanding_types):
+            status = "expanding" if expanding_types else "scheduled"
+
+        conf = entry["confidence"]
+        conf_str = (
+            f"<span style='color:{_conf_color(conf)};font-weight:600'>{conf:.2f}</span>"
+            if conf is not None else "<span style='color:#888'>—</span>"
+        )
+        note = entry.get("note", "")
+        badge = _STATUS_BADGE.get(status, _STATUS_BADGE["queued"])
+
+        rows += (
+            f"<tr style='border-bottom:1px solid #333'>"
+            f"<td style='padding:7px 10px;color:#eee;font-size:13px'>{entry['type']}</td>"
+            f"<td style='padding:7px 10px;color:#aaa;font-size:12px'>{entry['first_seen']}</td>"
+            f"<td style='padding:7px 10px'>{_coverage_bar(entry['seqs'])}</td>"
+            f"<td style='padding:7px 10px;color:#aaa;font-size:12px'>{entry['source']}</td>"
+            f"<td style='padding:7px 10px;text-align:center'>{conf_str}</td>"
+            f"<td style='padding:7px 10px'>{badge}</td>"
+            f"<td style='padding:7px 10px;color:#888;font-size:11px;font-style:italic'>{note}</td>"
+            f"</tr>"
+        )
+
+    header = (
+        "<tr style='border-bottom:2px solid #555'>"
+        + "".join(
+            f"<th style='padding:7px 10px;color:#aaa;font-size:12px;text-align:left'>{h}</th>"
+            for h in ["Drone type", "First seen", "Training seqs", "Source", "Confidence", "Status", "Notes"]
+        )
+        + "</tr>"
+    )
+    st.markdown(
+        f"<div style='background:rgba(0,0,0,0.3);border-radius:8px;padding:4px;overflow-x:auto'>"
+        f"<table style='width:100%;border-collapse:collapse'>{header}{rows}</table>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Show agent action log if any actions have been taken
+    if actions:
+        st.markdown("**Agent actions this session**")
+        for a in actions:
+            icon = {"schedule_test_range_session": "🗓", "request_synthetic_expansion": "🔬",
+                    "deploy_model": "🚀"}.get(a["tool"], "⚙")
+            st.markdown(
+                f"<div style='background:rgba(243,156,18,0.1);border-left:3px solid #f39c12;"
+                f"padding:6px 12px;margin:4px 0;border-radius:0 4px 4px 0;font-size:12px;color:#ddd'>"
+                f"{icon} <b style='color:#f39c12'>{a['tool']}</b> · {a['timestamp']} · "
+                f"{json.dumps(a['result'].get('session_id') or a['result'].get('job_id') or a['result'].get('deployment_id',''))}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("No agent actions yet — run a scenario in the 🧠 Agent tab to see this update.")
 
 # ── Fleet definition ──────────────────────────────────────────────────────────
 
@@ -401,6 +533,13 @@ def render():
             "alongside fresh synthetic data throughout training. The model retains memory of "
             "rare real events even as the synthetic dataset grows around them."
         )
+
+    st.divider()
+
+    st.divider()
+
+    # ── Drone knowledge base ──────────────────────────────────────────────────
+    _knowledge_base_section()
 
     st.divider()
 

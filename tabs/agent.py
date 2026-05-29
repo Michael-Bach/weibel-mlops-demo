@@ -94,7 +94,10 @@ _MLF_RUNS = [
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
+_ACTION_TOOLS = {"schedule_test_range_session", "request_synthetic_expansion", "deploy_model"}
+
 _TOOLS = [
+    # ── Query tools ──────────────────────────────────────────────────────────
     {
         "name": "get_fleet_status",
         "description": (
@@ -124,7 +127,7 @@ _TOOLS = [
         "name": "query_mlflow_runs",
         "description": (
             "Returns recent MLflow training runs: model type, best val F1, training data, "
-            "and registry stage. Check before recommending retraining."
+            "and registry stage. Check before acting on retraining."
         ),
         "input_schema": {
             "type": "object",
@@ -142,30 +145,100 @@ _TOOLS = [
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    # ── Action tools ─────────────────────────────────────────────────────────
+    {
+        "name": "schedule_test_range_session",
+        "description": (
+            "Books a test-range data collection session: co-locates the specified XENTA units "
+            "with the instrumentation radar at the test range to collect labelled sequences "
+            "for a new drone type or clutter environment. "
+            "Use when PSI alert is caused by a new drone type or major clutter change."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "unit_ids":    {"type": "array",  "items": {"type": "string"},
+                                "description": "XENTA unit serial numbers to bring to the range"},
+                "environment": {"type": "string",
+                                "description": "Clutter environment to replicate (e.g. 'coastal-high-sea')"},
+                "drone_types": {"type": "array",  "items": {"type": "string"},
+                                "description": "Drone types to fly (known or 'unknown-A' for new)"},
+                "priority":    {"type": "string", "enum": ["routine", "urgent"],
+                                "description": "Scheduling priority"},
+            },
+            "required": ["unit_ids", "environment", "drone_types"],
+        },
+    },
+    {
+        "name": "request_synthetic_expansion",
+        "description": (
+            "Queues a synthetic data generation run to multiply a small set of real captures "
+            "into thousands of training sequences across the full operational envelope. "
+            "Use after a test-range session confirms a new drone type's physical signature, "
+            "or to fill coverage gaps (SNR range, aspect angles, clutter types)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "drone_type":   {"type": "string",
+                                 "description": "Drone type to expand (e.g. 'FPV-250')"},
+                "n_sequences":  {"type": "integer",
+                                 "description": "Number of synthetic sequences to generate"},
+                "clutter_types":{"type": "array", "items": {"type": "string"},
+                                 "description": "Clutter environments to cover"},
+                "snr_range_db": {"type": "array", "items": {"type": "number"},
+                                 "description": "[min_snr, max_snr] in dB"},
+            },
+            "required": ["drone_type", "n_sequences"],
+        },
+    },
+    {
+        "name": "deploy_model",
+        "description": (
+            "Pushes an ONNX model artifact OTA to specified XENTA units. "
+            "Use after a retrained model has passed the accuracy gate and human review. "
+            "Can target a subset of the fleet (e.g. coastal units only)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "model_version":     {"type": "string",
+                                      "description": "Registry version to deploy (e.g. 'v8')"},
+                "target_units":      {"type": "array", "items": {"type": "string"},
+                                      "description": "Unit IDs, or ['all'] for full fleet"},
+                "rollback_on_fail":  {"type": "boolean",
+                                      "description": "Auto-rollback if validation fails on unit"},
+            },
+            "required": ["model_version", "target_units"],
+        },
+    },
 ]
 
-_DEFAULT_SYSTEM = """You are an MLOps advisor for the Weibel XENTA counter-UAS radar fleet.
+_DEFAULT_SYSTEM = """You are the MLOps controller for the Weibel XENTA counter-UAS radar fleet.
+You have both investigative tools (read-only) and action tools (write) at your disposal.
 
-Your task:
-1. Call get_fleet_status to understand the fleet-wide picture.
-2. For any unit in warn or alert state, call get_psi_report to get the breakdown.
-3. Call query_mlflow_runs and get_model_registry to understand the current model.
-4. Give a clear, specific, justified recommendation — one of:
-   - No action (drift within tolerance)
-   - Increase monitoring cadence
-   - Schedule test-range data collection (specify units, environment, drone types)
-   - Trigger retraining (specify what new data is needed)
-   - Investigate hardware fault (extreme isolated PSI — retraining will not help)
-   - Rollback model (suspected regression)
+INVESTIGATE FIRST — always in this order:
+1. get_fleet_status — fleet-wide picture
+2. get_psi_report — for every unit in warn or alert state
+3. query_mlflow_runs + get_model_registry — before any retraining or deployment decision
 
-Key domain knowledge:
-- PSI < 0.10: stable. PSI 0.10–0.20: warn. PSI > 0.20: alert. PSI > 0.50: likely hardware.
-- Fleet-wide simultaneous drift across environments → new drone type (centroid shift).
-- Localised drift on units sharing an environment → environmental/clutter change (energy shift).
-- Single-unit extreme drift while others are normal → hardware fault, not a data problem.
-- Check registry before recommending retraining — a Staging model may already exist.
+THEN ACT — call the appropriate action tool:
+- schedule_test_range_session: new drone type detected or major clutter change
+- request_synthetic_expansion: fill coverage gaps after a test-range session confirms a signature
+- deploy_model: push a validated model to the affected units
+- No action tool: PSI < 0.10 (stable) or hardware fault (retraining will not help)
 
-Be concise. Cite specific PSI numbers, unit IDs, and model versions."""
+TRIAGE RULES:
+- PSI > 0.50, single isolated unit, recent physical change → hardware fault. Investigate hardware. Do NOT retrain.
+- Fleet-wide simultaneous drift across different environments → new drone type (centroid-driven PSI).
+  → schedule_test_range_session for representative units + request_synthetic_expansion once type confirmed.
+- Localised drift on units sharing an environment → clutter change.
+  → schedule_test_range_session for those units in that environment.
+- PSI 0.10–0.20 fleet-wide → warn level, increase monitoring cadence only.
+- PSI < 0.10 → stable, no action.
+
+Be decisive. If the evidence warrants action, call the action tool — do not just recommend it.
+Cite specific PSI numbers, unit IDs, and model versions in your reasoning."""
 
 
 # ── Tool execution ────────────────────────────────────────────────────────────
@@ -224,7 +297,68 @@ def _run_tool(name: str, inputs: dict, fleet: list) -> str:
             "accuracy_gate": {"staging": 0.90, "production": 0.95},
         }, indent=2)
 
+    # ── Action tools ──────────────────────────────────────────────────────────
+    if name == "schedule_test_range_session":
+        import random, string
+        sid = "TRS-2026-" + "".join(random.choices(string.digits, k=4))
+        result = {
+            "session_id":   sid,
+            "status":       "scheduled",
+            "units":        inputs.get("unit_ids", []),
+            "environment":  inputs.get("environment", ""),
+            "drone_types":  inputs.get("drone_types", []),
+            "priority":     inputs.get("priority", "routine"),
+            "eta_days":     2 if inputs.get("priority") == "urgent" else 5,
+            "instrumentation_radar": "Weibel MFCW-3 (range instrumentation)",
+            "expected_sequences_per_type": 40,
+            "note": "TSPI ground-truth labels will be fused automatically after session.",
+        }
+        _log_action(name, inputs, result)
+        return json.dumps(result, indent=2)
+
+    if name == "request_synthetic_expansion":
+        import random, string
+        jid = "SYN-2026-" + "".join(random.choices(string.digits, k=4))
+        n = inputs.get("n_sequences", 1000)
+        result = {
+            "job_id":            jid,
+            "status":            "queued",
+            "drone_type":        inputs.get("drone_type", ""),
+            "n_sequences":       n,
+            "clutter_types":     inputs.get("clutter_types", ["rayleigh"]),
+            "snr_range_db":      inputs.get("snr_range_db", [-20, 40]),
+            "estimated_runtime": f"{max(1, n // 500)} min",
+            "note": "Sequences reproducible via DVC seed. Will be added to training set automatically.",
+        }
+        _log_action(name, inputs, result)
+        return json.dumps(result, indent=2)
+
+    if name == "deploy_model":
+        targets = inputs.get("target_units", [])
+        result = {
+            "deployment_id":   "DEP-2026-" + datetime.utcnow().strftime("%H%M%S"),
+            "status":          "dispatched",
+            "model_version":   inputs.get("model_version", ""),
+            "target_units":    targets,
+            "units_count":     len(targets) if targets != ["all"] else "all",
+            "rollback_on_fail": inputs.get("rollback_on_fail", True),
+            "ota_method":      "authenticated HTTPS to unit update endpoint",
+            "note": "Units will validate ONNX latency gate before activating new model.",
+        }
+        _log_action(name, inputs, result)
+        return json.dumps(result, indent=2)
+
     return json.dumps({"error": f"Unknown tool: {name}"})
+
+
+def _log_action(tool: str, inputs: dict, result: dict):
+    """Persist action tool calls to session state for cross-tab display."""
+    import streamlit as _st
+    entry = {
+        "tool": tool, "inputs": inputs, "result": result,
+        "timestamp": datetime.utcnow().strftime("%H:%M:%S UTC"),
+    }
+    _st.session_state.setdefault("agent_actions", []).append(entry)
 
 
 # ── Agent loop ────────────────────────────────────────────────────────────────
@@ -307,17 +441,23 @@ def _render_events(events: list):
         elif kind == "text":
             st.markdown(_card("#2ecc71", "🤖 Agent", ev[1]), unsafe_allow_html=True)
         elif kind == "tool_call":
-            args = json.dumps(ev[2], separators=(",", ":")) if ev[2] else "()"
-            st.markdown(_card("#c084fc", f"🔧 Tool call → {ev[1]}", args, mono=True),
+            is_action = ev[1] in _ACTION_TOOLS
+            color  = "#f39c12" if is_action else "#c084fc"
+            icon   = "🚀 Action" if is_action else "🔧 Query"
+            args   = json.dumps(ev[2], separators=(",", ":")) if ev[2] else "()"
+            st.markdown(_card(color, f"{icon} → {ev[1]}", args, mono=True),
                         unsafe_allow_html=True)
         elif kind == "tool_result":
+            is_action = ev[1] in _ACTION_TOOLS
+            color  = "#3498db" if is_action else "#27ae60"
+            icon   = "✅ Confirmed" if is_action else "📦 Result"
             preview = ev[2]
             if len(preview) > 450:
                 preview = preview[:450] + "\n  …"
-            st.markdown(_card("#27ae60", f"📦 Result ← {ev[1]}", preview, mono=True),
+            st.markdown(_card(color, f"{icon} ← {ev[1]}", preview, mono=True),
                         unsafe_allow_html=True)
         elif kind == "followup_q":
-            st.markdown(_card("#3498db", f"💬 Follow-up", ev[1]), unsafe_allow_html=True)
+            st.markdown(_card("#3498db", "💬 Follow-up", ev[1]), unsafe_allow_html=True)
 
 
 def _psi_status(psi: float) -> str:
@@ -501,7 +641,7 @@ def _render_impl():
         st.rerun()
 
     if run_btn:
-        for k in ("agent_trace", "agent_messages", "agent_followups"):
+        for k in ("agent_trace", "agent_messages", "agent_followups", "agent_actions"):
             st.session_state.pop(k, None)
         with st.spinner("Agent reasoning…"):
             trace, messages = _run_agent(fleet, description, api_key, system)
