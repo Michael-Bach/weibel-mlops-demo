@@ -263,6 +263,32 @@ def render():
         fig   = go.Figure()
         _GRID = "rgba(128,128,128,0.12)"
 
+        # Shade curriculum phases from the best run (if seq_len was logged)
+        _best_seq = _fetch_history(str(ranked[0]["_run_dir"]), "seq_len")
+        if _best_seq:
+            _phase_colors = {5: "rgba(52,152,219,0.07)",
+                             10: "rgba(155,89,182,0.07)",
+                             15: "rgba(46,204,113,0.07)"}
+            _cur_len  = int(_best_seq[0][1])
+            _p_start  = _best_seq[0][0]
+            _phases   = []
+            for step, slen in _best_seq[1:]:
+                slen = int(slen)
+                if slen != _cur_len:
+                    _phases.append((_p_start, step - 1, _cur_len))
+                    _cur_len, _p_start = slen, step
+            _phases.append((_p_start, _best_seq[-1][0], _cur_len))
+            for p0, p1, plen in _phases:
+                fig.add_vrect(
+                    x0=p0, x1=p1,
+                    fillcolor=_phase_colors.get(plen, "rgba(100,100,100,0.05)"),
+                    line_width=0,
+                    annotation_text=f"seq={plen}",
+                    annotation_font_color="#888",
+                    annotation_font_size=9,
+                    annotation_position="top left",
+                )
+
         for i, r in enumerate(ranked):
             col   = colors[i % len(colors)]
             label = _MEDALS[i] if i < 3 else f"#{i+1}"
@@ -318,11 +344,20 @@ def render():
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # ── curriculum strip (GRU only) ──────────────────────────────────────
-        for i, r in enumerate(ranked[:1]):
-            seq = _fetch_history(str(r["_run_dir"]), "seq_len")
-            if seq:
-                st.caption(f"Curriculum (best run): sequence length {' → '.join(str(int(v)) for _, v in seq[::max(1, len(seq)//6)])}")
+        # ── curriculum note and loss-scale explanation ───────────────────────
+        if _best_seq:
+            st.caption(
+                "**Shaded regions = curriculum phases** (seq_len 5 → 10 → 15). "
+                "Loss jumps at each transition because the task suddenly becomes harder "
+                "(the model must integrate over more sweeps). This is expected — "
+                "it is not instability. Loss resumes descending within a few epochs."
+            )
+        else:
+            st.caption(
+                "Dotted lines = train loss (left axis).  Solid lines = val F1 (right axis). "
+                "CNN uses MSE loss (~0.005 scale); ConvGRU uses weighted BCE with pos_weight=500 "
+                "(~0.6 scale) — the two y-axis scales are not comparable across model types."
+            )
 
         # ── leaderboard ──────────────────────────────────────────────────────
         st.markdown("**Run leaderboard**")
