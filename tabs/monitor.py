@@ -232,7 +232,7 @@ def render():
                     f"<div style='text-align:center;border-left:3px solid {col};padding-left:8px'>"
                     f"<div style='font-size:0.75rem;color:#aaa'>{icon} {_run_label(r)}</div>"
                     f"<div style='font-size:1.8rem;font-weight:700;color:{_f1_color(f1)}'>"
-                    f"{f1:.3f if f1 else '—'}</div>"
+                    f"{'—' if f1 is None else f'{f1:.3f}'}</div>"
                     f"<div style='font-size:0.7rem;color:#666'>"
                     f"n_train={lp.get('n_train','?')}</div></div>",
                     unsafe_allow_html=True,
