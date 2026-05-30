@@ -1,0 +1,40 @@
+radar:
+  n_sweeps: 10
+  n_azimuths: 180
+  n_ranges: 64
+  beam_width_deg: 3.0
+  pulse_width_bins: 2.0
+
+target:
+  range_bin: 40
+  azimuth_deg: 60.0
+  radial_velocity: 1.5
+  tangential_velocity: 2.0
+  snr_db: 10.0
+
+data:
+  n_train: 1600
+  n_val: 400
+  snr_range: [-20.0, 40.0]
+  range_margin: 10
+  seed: 42
+
+model:
+  enc_ch: [32, 64]
+  kernel_size: 3
+
+training:
+  epochs: 60
+  batch_size: 16
+  learning_rate: 5.0e-4
+  weight_decay: 1.0e-4
+  pos_weight: 150.0
+  baseline_f1: 0.25
+  curriculum:
+    - {epoch_end: 12, seq_len: 5}
+    - {epoch_end: 30, seq_len: 10}
+    - {epoch_end: 60, seq_len: 15}
+
+onnx:
+  opset_version: 17
+  model_path: "artifacts/recurrent_model.onnx"
