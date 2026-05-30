@@ -511,14 +511,15 @@ def render():
 
     st.markdown("**Model comparison across training runs (same dataset, matched Pfa)**")
     st.markdown("""
-| Model | Params | Val F1 | Inference / sweep | Streaming | ONNX target |
+| Model | Params | Best val F1 | Inference / sweep | Streaming | ONNX target |
 |---|---:|---:|---:|:---:|---|
-| ConvGRU ⭐ | 5 694 | 0.356 | <1 ms (CPU) | ✓ | ARM Cortex-A / embedded Linux |
-| CNN (batch) | 19 073 | 0.307† | 0.8 ms (batch-10) | ✗ | ARM Cortex-A / Vitis AI FPGA |
+| ConvGRU ⭐ | 5 694 | 0.379 | <1 ms (CPU) | ✓ | ARM Cortex-A / embedded Linux |
+| CNN (batch) | 19 073 | 0.574† | 0.8 ms (batch-10) | ✗ | ARM Cortex-A / Vitis AI FPGA |
 | Transformer | 20 056 | 0.307 | ~2 ms (batch-10) | ✗ | ARM Cortex-A |
 | CA-CFAR (classical) | — | — | 2.2 ms | ✓ | Any (no model) |
 
-†CNN cell-level F1 on single sweep; 10-sweep batch AUC is meaningfully higher (see ROC tab).
+†CNN batch detector — cell-level F1 at single-sweep resolution; 10-sweep AUC is higher (see ROC tab).
+Full training run history and hyperparameter comparison in the **Monitor** tab.
     """)
 
     # ── 5. PSI drift monitoring ────────────────────────────────────────────────
@@ -699,7 +700,6 @@ def render():
     )
 
     st.info(
-        "**Next tab →** Agentic MLOps: a Claude-powered agent that interprets PSI drift reports, "
-        "queries MLflow experiment history, and recommends a retraining action — "
-        "demonstrating agentic AI integrated with the pipeline described here."
+        "**Next tab →** Monitor: compare all training runs side-by-side, inspect per-epoch "
+        "learning curves, and track the deployed model's val F1 against the latest run."
     )

@@ -152,6 +152,11 @@ def _run_label(r: dict) -> str:
 
 def render():
     st.markdown("### 📈 Model Training Monitor")
+    st.caption(
+        "The Pipeline tab described how training runs feed the deployment loop. "
+        "This tab is where you observe that loop: compare experiments, spot regressions, "
+        "and verify a new run beats the deployed model before promoting it to the fleet."
+    )
 
     col_btn, col_note = st.columns([1, 6])
     with col_btn:
