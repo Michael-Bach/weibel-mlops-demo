@@ -1,0 +1,14 @@
+artifact_uri: file:///home/bach/dev/work/weibel-mlops-demo/mlruns/926580680783543521/d12be9e79f9446fd859a85bab9dcbb1a/artifacts
+end_time: 1780143413556
+entry_point_name: ''
+experiment_id: '926580680783543521'
+lifecycle_stage: active
+run_id: d12be9e79f9446fd859a85bab9dcbb1a
+run_name: trusting-colt-862
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780143311727
+status: 3
+tags: []
+user_id: bach

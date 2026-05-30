@@ -1,0 +1,14 @@
+artifact_uri: /home/bach/dev/work/weibel-mlops-demo/mlruns/168499014080440538/8fe4d4c8ff4945eb8aa6bc4451f2e949/artifacts
+end_time: 1780144623153
+entry_point_name: ''
+experiment_id: '168499014080440538'
+lifecycle_stage: active
+run_id: 8fe4d4c8ff4945eb8aa6bc4451f2e949
+run_name: righteous-eel-895
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780143928760
+status: 3
+tags: []
+user_id: bach

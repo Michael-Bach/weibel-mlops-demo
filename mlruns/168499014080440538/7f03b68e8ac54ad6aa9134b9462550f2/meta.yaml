@@ -1,0 +1,14 @@
+artifact_uri: /home/bach/dev/work/weibel-mlops-demo/mlruns/168499014080440538/7f03b68e8ac54ad6aa9134b9462550f2/artifacts
+end_time: 1779877256825
+entry_point_name: ''
+experiment_id: '168499014080440538'
+lifecycle_stage: active
+run_id: 7f03b68e8ac54ad6aa9134b9462550f2
+run_name: adventurous-loon-618
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1779877077834
+status: 3
+tags: []
+user_id: bach

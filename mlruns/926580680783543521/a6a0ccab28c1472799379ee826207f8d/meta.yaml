@@ -1,0 +1,14 @@
+artifact_uri: file:///home/bach/dev/work/weibel-mlops-demo/mlruns/926580680783543521/a6a0ccab28c1472799379ee826207f8d/artifacts
+end_time: 1780143258132
+entry_point_name: ''
+experiment_id: '926580680783543521'
+lifecycle_stage: active
+run_id: a6a0ccab28c1472799379ee826207f8d
+run_name: traveling-stag-592
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780143151525
+status: 3
+tags: []
+user_id: bach

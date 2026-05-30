@@ -23,8 +23,7 @@ artifacts/*
 !artifacts/recurrent_metrics.json
 !artifacts/roc_comparison_1d.json
 
-# Experiment tracking
-mlruns/
+# Experiment tracking — mlruns tracked so Streamlit Cloud has run history
 mlflow.db
 
 # Secrets

@@ -1,0 +1,37 @@
+# params_ppi.yaml — PPI rotating-radar pipeline parameters
+
+radar:
+  n_sweeps: 10          # complete 360° rotations
+  n_azimuths: 180       # angular bins (2° resolution — halved for GPU memory)
+  n_ranges: 64          # range bins
+  beam_width_deg: 3.0   # one-way 3 dB beamwidth
+  pulse_width_bins: 2.0 # Gaussian pulse half-width in range bins
+
+target:
+  # Default values shown in the UI; user can adjust via sliders
+  range_bin: 40         # 0..n_ranges-1
+  azimuth_deg: 60.0     # 0..359
+  radial_velocity: 1.5  # range bins per sweep (positive = moving away)
+  tangential_velocity: 2.0  # degrees per sweep (positive = clockwise)
+  snr_db: 10.0          # signal-to-noise ratio in dB
+
+data:
+  n_train: 800
+  n_val: 200
+  snr_range: [-20.0, 40.0]
+  range_margin: 10      # keep target at least this many bins from edges
+  seed: 42
+
+model:
+  filters: [16, 32, 32, 16]
+  kernel_size: 3
+
+training:
+  epochs: 50
+  batch_size: 8
+  learning_rate: 0.0005
+  baseline_f1: 0.25     # CI gate — F1 at thr=0.3 on soft Gaussian labels
+
+onnx:
+  opset_version: 17
+  model_path: "artifacts/ppi_model.onnx"

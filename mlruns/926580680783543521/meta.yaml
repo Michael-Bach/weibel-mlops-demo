@@ -1,0 +1,8 @@
+artifact_location: file:///home/bach/dev/work/weibel-mlops-demo/mlruns/926580680783543521
+creation_time: 1780143151481
+experiment_id: '926580680783543521'
+last_update_time: 1780143151481
+lifecycle_stage: active
+name: ppi-radar-detector
+trace_location: null
+workspace: default

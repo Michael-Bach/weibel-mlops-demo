@@ -1,0 +1,8 @@
+artifact_location: /home/bach/dev/work/weibel-mlops-demo/mlruns/168499014080440538
+creation_time: 1779877077788
+experiment_id: '168499014080440538'
+last_update_time: 1779877077788
+lifecycle_stage: active
+name: recurrent-radar-detector
+trace_location: null
+workspace: default

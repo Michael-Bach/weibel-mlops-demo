@@ -3,13 +3,6 @@ tabs/monitor.py — MLflow training monitor tab.
 
 Reads the mlruns/ file store directly (no mlflow import) to avoid the
 protobuf / Python 3.14 incompatibility on Streamlit Cloud.
-
-MLflow file-store layout:
-  mlruns/{exp_id}/meta.yaml          — experiment name
-  mlruns/{exp_id}/{run_id}/meta.yaml — run status, start_time
-  mlruns/{exp_id}/{run_id}/metrics/{key}  — lines: "ts value step"
-  mlruns/{exp_id}/{run_id}/params/{key}   — single value
-  mlruns/{exp_id}/{run_id}/tags/{key}     — single value
 """
 import json
 from pathlib import Path
@@ -19,35 +12,31 @@ import plotly.graph_objects as go
 import streamlit as st
 import yaml
 
-ROOT    = Path(__file__).parent.parent
-MLRUNS  = ROOT / "mlruns"
+ROOT   = Path(__file__).parent.parent
+MLRUNS = ROOT / "mlruns"
 
 _MODELS = {
-    "CNN  (batch detector)": {
+    "CNN": {
+        "label":        "CNN  (batch detector)",
         "metrics_file": "ppi_metrics.json",
         "experiment":   "ppi-radar-detector",
         "train_cmd":    "PYTHONPATH=. python src/train_ppi.py",
-        "color":        "#ffe66d",
+        "colors":       ["#ffe66d", "#f39c12", "#e67e22", "#d35400"],
     },
-    "ConvGRU  (streaming detector)": {
+    "ConvGRU": {
+        "label":        "ConvGRU  (streaming detector)",
         "metrics_file": "recurrent_metrics.json",
         "experiment":   "recurrent-radar-detector",
         "train_cmd":    "PYTHONPATH=. python src/train_recurrent.py",
-        "color":        "#c084fc",
+        "colors":       ["#c084fc", "#8b5cf6", "#7c3aed", "#5b21b6"],
     },
 }
 
 _STATUS_ICON = {"FINISHED": "🟢", "RUNNING": "🟡", "FAILED": "🔴"}
+_MEDALS      = ["🥇", "🥈", "🥉"]
 
 
 # ── file-store helpers ────────────────────────────────────────────────────────
-
-def _read_file(path: Path) -> str:
-    try:
-        return path.read_text().strip()
-    except Exception:
-        return ""
-
 
 def _read_yaml(path: Path) -> dict:
     try:
@@ -56,13 +45,15 @@ def _read_yaml(path: Path) -> dict:
         return {}
 
 
-def _find_experiment_id(name: str) -> str | None:
+def _find_experiment_dir(name: str) -> Path | None:
     if not MLRUNS.exists():
         return None
-    for exp_dir in MLRUNS.iterdir():
-        meta = _read_yaml(exp_dir / "meta.yaml")
+    for d in MLRUNS.iterdir():
+        if not d.is_dir():
+            continue
+        meta = _read_yaml(d / "meta.yaml")
         if meta.get("name") == name:
-            return exp_dir.name
+            return d
     return None
 
 
@@ -71,23 +62,18 @@ def _load_run(run_dir: Path) -> dict | None:
     if not meta:
         return None
 
-    def _kv(subdir: str) -> dict:
-        d = {}
-        p = run_dir / subdir
-        if p.exists():
-            for f in p.iterdir():
-                d[f.name] = _read_file(f)
-        return d
+    def _kv(sub: str) -> dict:
+        p = run_dir / sub
+        return {f.name: f.read_text().strip() for f in p.iterdir()} if p.exists() else {}
 
     params = _kv("params")
     tags   = _kv("tags")
 
-    # latest value for each metric (last non-empty line)
     metrics: dict[str, float] = {}
     m_dir = run_dir / "metrics"
     if m_dir.exists():
         for mf in m_dir.iterdir():
-            lines = [l for l in mf.read_text().splitlines() if l.strip()]
+            lines = [ln for ln in mf.read_text().splitlines() if ln.strip()]
             if lines:
                 try:
                     metrics[mf.name] = float(lines[-1].split()[1])
@@ -106,20 +92,19 @@ def _load_run(run_dir: Path) -> dict | None:
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def _fetch_runs(experiment_name: str, n: int = 20) -> list[dict]:
-    exp_id = _find_experiment_id(experiment_name)
-    if exp_id is None:
+def _fetch_runs(experiment_name: str) -> list[dict]:
+    exp_dir = _find_experiment_dir(experiment_name)
+    if exp_dir is None:
         return []
-    exp_dir = MLRUNS / exp_id
     runs = []
     for run_dir in exp_dir.iterdir():
-        if not run_dir.is_dir() or run_dir.name == "meta.yaml":
+        if not run_dir.is_dir():
             continue
         r = _load_run(run_dir)
         if r:
             runs.append(r)
     runs.sort(key=lambda r: r["start_time"], reverse=True)
-    return runs[:n]
+    return runs
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -138,198 +123,273 @@ def _fetch_history(run_dir_str: str, key: str) -> list[tuple[int, float]]:
     return result
 
 
-def _deployed_metrics(filename: str) -> dict:
+def _deployed(filename: str) -> dict:
     p = ROOT / "artifacts" / filename
     return json.loads(p.read_text()) if p.exists() else {}
 
 
-def _f1_color(val: float | None) -> str:
-    if val is None:
-        return "grey"
-    if val >= 0.60:
+def _f1_color(v: float | None) -> str:
+    if v is None:
+        return "#888"
+    if v >= 0.60:
         return "#2ecc71"
-    if val >= 0.40:
+    if v >= 0.40:
         return "#f39c12"
     return "#e74c3c"
+
+
+def _run_label(r: dict) -> str:
+    lp = r["params"]
+    return f"lr={lp.get('lr','?')} ep={lp.get('epochs','?')}"
 
 
 # ── render ────────────────────────────────────────────────────────────────────
 
 def render():
     st.markdown("### 📈 Model Training Monitor")
-    st.caption(
-        "Live view of MLflow training runs (reads `mlruns/` directly). "
-        "Val F1 is at threshold 0.3 on the held-out validation set."
-    )
 
-    col_btn, col_note = st.columns([1, 5])
+    col_btn, col_note = st.columns([1, 6])
     with col_btn:
         if st.button("🔄 Refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
     with col_note:
-        st.caption("Cache TTL 30 s — or click Refresh for immediate update.")
+        st.caption("Reads `mlruns/` directly — no mlflow server needed.  Cache TTL 30 s.")
 
-    for model_label, cfg in _MODELS.items():
-        st.markdown("---")
-        st.markdown(f"#### {model_label}")
+    # ── cross-model hero row ──────────────────────────────────────────────────
+    all_deployed = {k: _deployed(v["metrics_file"]) for k, v in _MODELS.items()}
+    all_runs     = {k: _fetch_runs(v["experiment"])  for k, v in _MODELS.items()}
 
-        deployed  = _deployed_metrics(cfg["metrics_file"])
-        runs      = _fetch_runs(cfg["experiment"])
-        d_f1      = deployed.get("val_f1")
-        d_nparams = deployed.get("n_params")
+    st.markdown("#### Deployed models at a glance")
+    hero_cols = st.columns(len(_MODELS))
+    for col, (key, cfg) in zip(hero_cols, _MODELS.items()):
+        d    = all_deployed[key]
+        runs = all_runs[key]
+        d_f1 = d.get("val_f1")
+        best_run_f1 = max(
+            (r["metrics"].get("best_val_f1", 0) for r in runs), default=None
+        ) if runs else None
 
-        c_dep, c_run, c_hint = st.columns([1, 1, 2])
-
-        with c_dep:
-            st.markdown("**Deployed model**")
+        with col:
             color = _f1_color(d_f1)
-            if d_f1 is not None:
-                st.markdown(
-                    f"<span style='font-size:2rem;color:{color};font-weight:700'>"
-                    f"{d_f1:.3f}</span>&nbsp;val F1",
-                    unsafe_allow_html=True,
+            st.markdown(
+                f"<div style='border:1px solid #333;border-radius:8px;padding:16px 20px;'>"
+                f"<div style='font-size:0.85rem;color:#aaa'>{cfg['label']}</div>"
+                f"<div style='font-size:2.6rem;font-weight:700;color:{color};line-height:1.1'>"
+                f"{d_f1:.3f}</div>"
+                f"<div style='font-size:0.8rem;color:#888'>deployed val F1</div>"
+                + (
+                    f"<div style='font-size:0.8rem;margin-top:6px;color:"
+                    f"{'#2ecc71' if best_run_f1 and best_run_f1 > (d_f1 or 0) else '#888'}'>"
+                    f"best logged: {best_run_f1:.3f}</div>"
+                    if best_run_f1 is not None else ""
                 )
-            else:
-                st.markdown("—")
-            if d_nparams:
-                st.caption(f"{d_nparams:,} parameters")
+                + f"<div style='font-size:0.75rem;color:#666'>{d.get('n_params',0):,} params  "
+                f"|  {len(runs)} run{'s' if len(runs)!=1 else ''}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── per-experiment panels ─────────────────────────────────────────────────
+    for key, cfg in _MODELS.items():
+        st.markdown("---")
+        st.markdown(f"#### {cfg['label']}")
+
+        d_f1  = all_deployed[key].get("val_f1")
+        runs  = all_runs[key]
+        colors = cfg["colors"]
 
         if not runs:
-            with c_run:
-                st.markdown("**Latest run**")
-                st.info("No MLflow runs found.")
-            with c_hint:
-                st.markdown("**To train**")
-                st.code(cfg["train_cmd"], language="bash")
+            st.info(f"No runs found for `{cfg['experiment']}`.")
+            st.code(cfg["train_cmd"], language="bash")
             continue
 
-        latest   = runs[0]
-        lm       = latest["metrics"]
-        lp       = latest["params"]
-        ci_gate  = latest["tags"].get("ci_gate", "PASSED")
-        status   = latest["status"]
-        best_f1  = lm.get("best_val_f1")
-        delta_f1 = (best_f1 - d_f1) if (best_f1 is not None and d_f1 is not None) else None
+        # Sort by best_val_f1 for ranking
+        ranked = sorted(runs, key=lambda r: r["metrics"].get("best_val_f1", 0), reverse=True)
+        best_run = ranked[0]
 
-        with c_run:
-            st.markdown("**Latest run**")
-            icon = _STATUS_ICON.get(status, "⚪")
-            ci_label = "✅ CI PASSED" if ci_gate != "FAILED" else "❌ CI FAILED"
-            st.markdown(f"{icon} **{status}** &nbsp; {ci_label}", unsafe_allow_html=True)
-            r_color = _f1_color(best_f1)
-            if best_f1 is not None:
-                st.markdown(
-                    f"<span style='font-size:2rem;color:{r_color};font-weight:700'>"
-                    f"{best_f1:.3f}</span>&nbsp;best val F1",
-                    unsafe_allow_html=True,
-                )
-            if delta_f1 is not None:
-                arrow  = "▲" if delta_f1 > 0 else "▼"
-                dcolor = "#2ecc71" if delta_f1 > 0 else "#e74c3c"
-                st.markdown(
-                    f"<span style='color:{dcolor}'>{arrow} {abs(delta_f1):.3f} vs deployed</span>",
-                    unsafe_allow_html=True,
-                )
-            st.caption(
-                f"lr={lp.get('lr','—')}  "
-                f"epochs={lp.get('epochs','—')}  "
-                f"n_params={lp.get('n_params','—')}"
+        # ── metrics strip ────────────────────────────────────────────────────
+        n_cols = min(len(runs), 4)
+        m_cols = st.columns(n_cols + 1)
+
+        with m_cols[0]:
+            color = _f1_color(d_f1)
+            st.markdown(
+                f"<div style='text-align:center'>"
+                f"<div style='font-size:0.75rem;color:#aaa'>⭐ deployed</div>"
+                f"<div style='font-size:1.8rem;font-weight:700;color:{color}'>{d_f1:.3f}</div>"
+                f"<div style='font-size:0.7rem;color:#666'>val F1</div></div>",
+                unsafe_allow_html=True,
             )
-            st.caption(f"run `{latest['run_id'][:8]}`")
 
-        with c_hint:
-            st.markdown("**To retrain**")
-            st.code(cfg["train_cmd"], language="bash")
-            if d_f1 is not None and d_f1 < 0.45:
-                st.warning(
-                    f"Val F1 = {d_f1:.3f} — model is likely missing targets in live detection. "
-                    "Consider retraining with more epochs or a wider SNR range.",
-                    icon="⚠️",
+        for i, r in enumerate(ranked[:n_cols]):
+            f1   = r["metrics"].get("best_val_f1")
+            col  = colors[i % len(colors)]
+            icon = _MEDALS[i] if i < 3 else f"#{i+1}"
+            lp   = r["params"]
+            with m_cols[i + 1]:
+                st.markdown(
+                    f"<div style='text-align:center;border-left:3px solid {col};padding-left:8px'>"
+                    f"<div style='font-size:0.75rem;color:#aaa'>{icon} {_run_label(r)}</div>"
+                    f"<div style='font-size:1.8rem;font-weight:700;color:{_f1_color(f1)}'>"
+                    f"{f1:.3f if f1 else '—'}</div>"
+                    f"<div style='font-size:0.7rem;color:#666'>"
+                    f"n_train={lp.get('n_train','?')}</div></div>",
+                    unsafe_allow_html=True,
                 )
 
-        # ── training curve ──────────────────────────────────────────────────
-        run_dir_str = str(latest["_run_dir"])
-        loss_hist   = _fetch_history(run_dir_str, "train_loss")
-        f1_hist     = _fetch_history(run_dir_str, "val_f1")
-        seq_hist    = _fetch_history(run_dir_str, "seq_len")
+        # ── multi-run chart ──────────────────────────────────────────────────
+        st.markdown("**Training curves — all runs**")
+        fig   = go.Figure()
+        _GRID = "rgba(128,128,128,0.12)"
 
-        if loss_hist or f1_hist:
-            fig   = go.Figure()
-            _GRID = "rgba(128,128,128,0.15)"
+        for i, r in enumerate(ranked):
+            col   = colors[i % len(colors)]
+            label = _MEDALS[i] if i < 3 else f"#{i+1}"
+            width = 2.5 if i == 0 else 1.5
+            rdstr = str(r["_run_dir"])
+
+            loss_hist = _fetch_history(rdstr, "train_loss")
+            f1_hist   = _fetch_history(rdstr, "val_f1")
 
             if loss_hist:
                 steps, vals = zip(*loss_hist)
                 fig.add_trace(go.Scatter(
-                    x=list(steps), y=list(vals), name="Train loss",
-                    line=dict(color="#e74c3c", width=2),
-                ))
-
-            if seq_hist:
-                steps_s, vals_s = zip(*seq_hist)
-                fig.add_trace(go.Scatter(
-                    x=list(steps_s), y=list(vals_s), name="Seq len (curriculum)",
-                    yaxis="y3",
-                    line=dict(color="#888", width=1, dash="dot"),
+                    x=list(steps), y=list(vals),
+                    name=f"{label} loss ({_run_label(r)})",
+                    line=dict(color=col, width=width, dash="dot"),
+                    opacity=0.55,
+                    showlegend=(i == 0),
+                    legendgroup=f"run{i}",
                 ))
 
             if f1_hist:
                 steps2, vals2 = zip(*f1_hist)
                 fig.add_trace(go.Scatter(
-                    x=list(steps2), y=list(vals2), name="Val F1",
+                    x=list(steps2), y=list(vals2),
+                    name=f"{label} {_run_label(r)}",
                     yaxis="y2",
-                    line=dict(color=cfg["color"], width=2.5),
+                    line=dict(color=col, width=width),
+                    legendgroup=f"run{i}",
                 ))
-                if d_f1 is not None:
-                    fig.add_hline(
-                        y=d_f1, line_dash="dash", line_color="#888",
-                        annotation_text=f"deployed {d_f1:.3f}",
-                        annotation_position="bottom right",
-                        yref="y2",
-                    )
 
-            fig.update_layout(
-                height=280,
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                xaxis=dict(title="Epoch", gridcolor=_GRID),
-                yaxis=dict(title="Train loss", color="#e74c3c", gridcolor=_GRID),
-                yaxis2=dict(
-                    title="Val F1", color=cfg["color"],
-                    overlaying="y", side="right", range=[0, 1.05],
-                ),
-                yaxis3=dict(
-                    overlaying="y", side="right",
-                    showticklabels=False, showgrid=False,
-                    anchor="free", position=1.0,
-                ),
-                legend=dict(
-                    bgcolor="rgba(30,30,30,0.7)", bordercolor="#444",
-                    borderwidth=1, font=dict(size=11),
-                ),
-                margin=dict(t=15, b=35, l=55, r=60),
+        if d_f1 is not None:
+            fig.add_hline(
+                y=d_f1, line_dash="dash", line_color="#888", line_width=1,
+                annotation_text=f"deployed {d_f1:.3f}",
+                annotation_position="bottom right",
+                yref="y2",
             )
-            st.plotly_chart(fig, use_container_width=True)
 
-        # ── run history table ───────────────────────────────────────────────
-        if len(runs) > 1:
-            with st.expander(f"All {len(runs)} recorded runs"):
-                rows = []
-                for r in runs:
-                    rows.append({
-                        "Run ID":      r["run_id"][:8],
-                        "Status":      _STATUS_ICON.get(r["status"], "⚪") + " " + r["status"],
-                        "Best val F1": round(r["metrics"].get("best_val_f1", float("nan")), 3),
-                        "Final loss":  round(r["metrics"].get("train_loss",  float("nan")), 4),
-                        "lr":          r["params"].get("lr", "—"),
-                        "epochs":      r["params"].get("epochs", "—"),
-                        "n_params":    r["params"].get("n_params", "—"),
-                        "CI gate":     r["tags"].get("ci_gate", "PASSED"),
-                    })
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        fig.update_layout(
+            height=300,
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(title="Epoch", gridcolor=_GRID),
+            yaxis=dict(title="Train loss (dotted)", gridcolor=_GRID, color="#888"),
+            yaxis2=dict(
+                title="Val F1", overlaying="y", side="right",
+                range=[0, 1.05], color="white",
+            ),
+            legend=dict(
+                bgcolor="rgba(20,20,20,0.8)", bordercolor="#444",
+                borderwidth=1, font=dict(size=10),
+            ),
+            margin=dict(t=10, b=35, l=55, r=65),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
+        # ── curriculum strip (GRU only) ──────────────────────────────────────
+        for i, r in enumerate(ranked[:1]):
+            seq = _fetch_history(str(r["_run_dir"]), "seq_len")
+            if seq:
+                st.caption(f"Curriculum (best run): sequence length {' → '.join(str(int(v)) for _, v in seq[::max(1, len(seq)//6)])}")
+
+        # ── leaderboard ──────────────────────────────────────────────────────
+        st.markdown("**Run leaderboard**")
+        rows = []
+        for i, r in enumerate(ranked):
+            lm, lp, lt = r["metrics"], r["params"], r["tags"]
+            f1 = lm.get("best_val_f1")
+            rows.append({
+                "Rank":        (_MEDALS[i] if i < 3 else f"#{i+1}"),
+                "Run":         r["run_id"][:8],
+                "Status":      _STATUS_ICON.get(r["status"], "⚪") + " " + r["status"],
+                "Best val F1": f"{f1:.4f}" if f1 is not None else "—",
+                "Δ deployed":  f"{f1 - d_f1:+.4f}" if (f1 and d_f1) else "—",
+                "lr":          lp.get("lr", "—"),
+                "epochs":      lp.get("epochs", "—"),
+                "n_train":     lp.get("n_train", "—"),
+                "CI gate":     "✅" if lt.get("ci_gate") != "FAILED" else "❌",
+            })
+
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df.style.apply(
+                lambda row: [
+                    "background-color: rgba(46,204,113,0.15)" if row["Rank"] == "🥇" else ""
+                ] * len(row),
+                axis=1,
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # ── cross-model comparison ────────────────────────────────────────────────
     st.markdown("---")
-    st.info(
-        "**MLflow tracking:** runs are stored under `mlruns/`. "
-        "Metrics update epoch-by-epoch while training — hit Refresh to see the latest step."
+    st.markdown("#### CNN vs ConvGRU — all runs combined")
+
+    fig2   = go.Figure()
+    _GRID2 = "rgba(128,128,128,0.12)"
+    for key, cfg in _MODELS.items():
+        runs = all_runs[key]
+        ranked = sorted(runs, key=lambda r: r["metrics"].get("best_val_f1", 0), reverse=True)
+        for i, r in enumerate(ranked):
+            f1_hist = _fetch_history(str(r["_run_dir"]), "val_f1")
+            if not f1_hist:
+                continue
+            steps, vals = zip(*f1_hist)
+            col   = cfg["colors"][i % len(cfg["colors"])]
+            label = f"{key} {_MEDALS[i] if i < 3 else f'#{i+1}'} {_run_label(r)}"
+            fig2.add_trace(go.Scatter(
+                x=list(steps), y=list(vals), name=label,
+                line=dict(color=col, width=2.5 if i == 0 else 1.5),
+                opacity=1.0 if i == 0 else 0.7,
+            ))
+
+    fig2.update_layout(
+        height=320,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(title="Epoch", gridcolor=_GRID2),
+        yaxis=dict(title="Val F1", gridcolor=_GRID2, range=[0, 1.0]),
+        legend=dict(
+            bgcolor="rgba(20,20,20,0.8)", bordercolor="#444",
+            borderwidth=1, font=dict(size=10),
+        ),
+        margin=dict(t=10, b=35, l=55, r=20),
+    )
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # ── ONNX model registry ───────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### Deployed ONNX artefacts")
+    onnx_files = {
+        "CNN":      ROOT / "artifacts" / "ppi_model.onnx",
+        "ConvGRU":  ROOT / "artifacts" / "recurrent_model.onnx",
+    }
+    reg_cols = st.columns(len(onnx_files))
+    for col, (name, path) in zip(reg_cols, onnx_files.items()):
+        with col:
+            if path.exists():
+                size_kb = path.stat().st_size / 1024
+                mtime   = pd.Timestamp(path.stat().st_mtime, unit="s")
+                st.markdown(
+                    f"**{name}** `{path.name}`  \n"
+                    f"Size: **{size_kb:.1f} KB**  \n"
+                    f"Updated: {mtime.strftime('%Y-%m-%d %H:%M')}"
+                )
+            else:
+                st.warning(f"{name}: ONNX not found")
+
+    st.caption(
+        "Metrics update epoch-by-epoch during training — hit **Refresh** to pull the latest step."
     )

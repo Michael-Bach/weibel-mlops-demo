@@ -1,0 +1,40 @@
+radar:
+  n_sweeps: 10          # used only for generate_ppi_sequence; seq_len overrides during training
+  n_azimuths: 180
+  n_ranges: 64
+  beam_width_deg: 3.0
+  pulse_width_bins: 2.0
+
+target:
+  range_bin: 40
+  azimuth_deg: 60.0
+  radial_velocity: 1.5
+  tangential_velocity: 2.0
+  snr_db: 10.0
+
+data:
+  n_train: 800
+  n_val: 200
+  snr_range: [-20.0, 40.0]
+  range_margin: 10
+  seed: 99
+
+model:
+  enc_ch: [16, 32]      # encoder channels; h is 1-channel confidence map (~6k params total)
+  kernel_size: 3
+
+training:
+  epochs: 40
+  batch_size: 8
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  pos_weight: 500.0     # upweight target cells in weighted MSELoss (~31:1 bg/fg ratio; 500 ensures peak exceeds 0.3)
+  baseline_f1: 0.25
+  curriculum:
+    - {epoch_end: 8,  seq_len: 5}
+    - {epoch_end: 16, seq_len: 10}
+    - {epoch_end: 30, seq_len: 15}
+
+onnx:
+  opset_version: 17
+  model_path: "artifacts/recurrent_model.onnx"
