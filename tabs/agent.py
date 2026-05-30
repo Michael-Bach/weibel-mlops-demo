@@ -12,8 +12,96 @@ import json
 import os
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
+import yaml
+
+_ROOT   = Path(__file__).parent.parent
+_MLRUNS = _ROOT / "mlruns"
+
+# ── Live mlruns file-store reader ─────────────────────────────────────────────
+
+def _read_yaml(p: Path) -> dict:
+    try:
+        return yaml.safe_load(p.read_text()) or {}
+    except Exception:
+        return {}
+
+def _read_file(p: Path) -> str:
+    try:
+        return p.read_text().strip()
+    except Exception:
+        return ""
+
+_STATUS_INT = {1: "RUNNING", 2: "SCHEDULED", 3: "FINISHED", 4: "FAILED", 5: "KILLED"}
+
+def _load_all_runs() -> list[dict]:
+    """Read every run from every experiment in mlruns/. Returns list sorted by best_val_f1 desc."""
+    if not _MLRUNS.exists():
+        return []
+    runs = []
+    for exp_dir in _MLRUNS.iterdir():
+        if not exp_dir.is_dir():
+            continue
+        exp_meta = _read_yaml(exp_dir / "meta.yaml")
+        exp_name = exp_meta.get("name", exp_dir.name)
+        for run_dir in exp_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            meta = _read_yaml(run_dir / "meta.yaml")
+            if not meta:
+                continue
+            raw_status = meta.get("status", "UNKNOWN")
+            status = _STATUS_INT.get(raw_status, str(raw_status))
+            # metrics
+            metrics: dict[str, float] = {}
+            m_dir = run_dir / "metrics"
+            if m_dir.exists():
+                for mf in m_dir.iterdir():
+                    lines = [ln for ln in mf.read_text().splitlines() if ln.strip()]
+                    if lines:
+                        try:
+                            metrics[mf.name] = float(lines[-1].split()[1])
+                        except Exception:
+                            pass
+            # params
+            params: dict[str, str] = {}
+            p_dir = run_dir / "params"
+            if p_dir.exists():
+                for pf in p_dir.iterdir():
+                    params[pf.name] = _read_file(pf)
+            # tags
+            tags: dict[str, str] = {}
+            t_dir = run_dir / "tags"
+            if t_dir.exists():
+                for tf in t_dir.iterdir():
+                    tags[tf.name] = _read_file(tf)
+            runs.append({
+                "run_id":      str(meta.get("run_id", run_dir.name)),
+                "run_name":    tags.get("mlflow.runName", run_dir.name[:8]),
+                "experiment":  exp_name,
+                "status":      status,
+                "best_val_f1": metrics.get("best_val_f1"),
+                "train_loss":  metrics.get("train_loss"),
+                "params":      params,
+                "tags":        tags,
+                "start_time":  meta.get("start_time", 0),
+            })
+    runs.sort(key=lambda r: r.get("best_val_f1") or 0, reverse=True)
+    return runs
+
+def _load_deployed() -> dict:
+    """Return deployed model metrics from artifacts JSON files."""
+    out = {}
+    for key, fname in [("CNN", "ppi_metrics.json"), ("ConvGRU", "recurrent_metrics.json")]:
+        p = _ROOT / "artifacts" / fname
+        if p.exists():
+            try:
+                out[key] = json.loads(p.read_text())
+            except Exception:
+                pass
+    return out
 
 try:
     import anthropic as _anthropic_mod
@@ -80,17 +168,7 @@ _PRESETS = {
     },
 }
 
-_MLF_RUNS = [
-    {"run_id": "7f03b68e8ac5", "run_name": "adventurous-loon-618",
-     "model": "ConvGRU", "best_val_f1": 0.356, "n_params": 5694,
-     "trained_on": "synthetic + range_v1 (800+312 seqs)", "registry": "Production"},
-    {"run_id": "3f126326dd21", "run_name": "bold-hawk-201",
-     "model": "ConvGRU", "best_val_f1": 0.341, "n_params": 5694,
-     "trained_on": "synthetic only (800 seqs)", "registry": "Archived"},
-    {"run_id": "e633e618604d", "run_name": "calm-jay-077",
-     "model": "CNN", "best_val_f1": 0.307, "n_params": 19073,
-     "trained_on": "synthetic only (800 seqs)", "registry": "Archived"},
-]
+# _MLF_RUNS removed — query_mlflow_runs now reads live from mlruns/ via _load_all_runs()
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -280,21 +358,48 @@ def _run_tool(name: str, inputs: dict, fleet: list) -> str:
 
     if name == "query_mlflow_runs":
         n = inputs.get("n_runs", 5)
-        return json.dumps({"experiment": "recurrent-radar-detector",
-                           "runs": _MLF_RUNS[:n]}, indent=2)
+        all_runs = _load_all_runs()
+        runs_out = []
+        for r in all_runs[:n]:
+            lp = r["params"]
+            runs_out.append({
+                "run_id":       r["run_id"][:12],
+                "run_name":     r["run_name"],
+                "experiment":   r["experiment"],
+                "status":       r["status"],
+                "best_val_f1":  round(r["best_val_f1"], 4) if r["best_val_f1"] else None,
+                "n_params":     lp.get("n_params"),
+                "lr":           lp.get("lr"),
+                "epochs":       lp.get("epochs"),
+                "n_train":      lp.get("n_train"),
+            })
+        return json.dumps({
+            "source": "mlruns/ file store (live)",
+            "total_runs": len(all_runs),
+            "returned": len(runs_out),
+            "runs": runs_out,
+        }, indent=2)
 
     if name == "get_model_registry":
+        deployed = _load_deployed()
+        gru = deployed.get("ConvGRU", {})
+        cnn = deployed.get("CNN", {})
         return json.dumps({
             "model_name": "radar-classifier",
-            "Production": {
-                "version": "v7", "run_id": "7f03b68e8ac5",
-                "best_val_f1": 0.356,
-                "trained_on": "synthetic + range_v1 (800 synthetic + 312 real XENTA seqs, "
-                              "inland + light-coastal clutter)",
-                "promoted_at": "2026-05-20T09:14:00Z",
+            "deployed_models": {
+                "ConvGRU": {
+                    "best_val_f1": gru.get("val_f1"),
+                    "n_params":    gru.get("n_params"),
+                    "artifact":    "artifacts/recurrent_model.onnx",
+                },
+                "CNN": {
+                    "best_val_f1": cnn.get("val_f1"),
+                    "n_params":    cnn.get("n_params"),
+                    "artifact":    "artifacts/ppi_model.onnx",
+                },
             },
-            "Staging": None,
-            "accuracy_gate": {"staging": 0.90, "production": 0.95},
+            "accuracy_gate": {"min_val_f1": 0.25},
+            "note": "Promote by re-running training script and committing new ONNX artifact.",
         }, indent=2)
 
     # ── Action tools ──────────────────────────────────────────────────────────
@@ -351,14 +456,23 @@ def _run_tool(name: str, inputs: dict, fleet: list) -> str:
     return json.dumps({"error": f"Unknown tool: {name}"})
 
 
+_ACTIONS_FILE = _ROOT / "artifacts" / "agent_actions.json"
+
 def _log_action(tool: str, inputs: dict, result: dict):
-    """Persist action tool calls to session state for cross-tab display."""
+    """Persist action tool calls to session state AND artifacts/agent_actions.json."""
     import streamlit as _st
     entry = {
         "tool": tool, "inputs": inputs, "result": result,
-        "timestamp": datetime.utcnow().strftime("%H:%M:%S UTC"),
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     _st.session_state.setdefault("agent_actions", []).append(entry)
+    # Write to disk so Fleet tab sees it even after page reload
+    try:
+        existing = json.loads(_ACTIONS_FILE.read_text()) if _ACTIONS_FILE.exists() else []
+        existing.append(entry)
+        _ACTIONS_FILE.write_text(json.dumps(existing, indent=2))
+    except Exception:
+        pass
 
 
 # ── Agent loop ────────────────────────────────────────────────────────────────
@@ -479,16 +593,20 @@ def render():
 
 
 def _render_impl():
-    st.markdown("## Concept: Agentic MLOps Advisor")
-    st.markdown(
+    st.markdown("## Agentic MLOps Advisor")
+    st.caption(
         "The pipeline produces alerts — PSI spikes, drift reports, accuracy regressions. "
-        "This explores handing the interpretation step to an LLM agent: give it the same "
-        "tools an on-call engineer would use and ask it to produce a justified recommendation. "
-        "Build your own scenario, inspect what the agent sees, ask follow-up questions."
+        "This tab hands the interpretation step to a Claude agent equipped with the same tools "
+        "an on-call engineer would use: fleet status, PSI detail, live MLflow run history, "
+        "and the ability to schedule a test-range session, queue synthetic expansion, or push a model OTA. "
+        "Select a scenario, run the agent, then ask follow-up questions."
     )
     st.info(
-        "**Exploratory prototype** — tool backends are simulated. "
-        "The agent is real: Claude Haiku with tool use, live against the Anthropic API."
+        "**What is live:** Claude Haiku with tool use, hitting the Anthropic API in real time. "
+        "`query_mlflow_runs` and `get_model_registry` return data read directly from the "
+        "`mlruns/` file store — the same runs visible in the Monitor tab. "
+        "Action tool responses (test-range booking, synthetic expansion, OTA deploy) "
+        "return realistic confirmations and update the Fleet tab's drone catalogue."
     )
 
     if not _ANTHROPIC_OK:
@@ -682,7 +800,7 @@ def _render_impl():
     st.divider()
 
     # ── Explainer ─────────────────────────────────────────────────────────────
-    st.markdown("### Why I think this is worth building")
+    st.markdown("### How this integrates with the pipeline")
     col_l, col_r = st.columns(2)
     with col_l:
         st.markdown("**Agentic patterns shown**")

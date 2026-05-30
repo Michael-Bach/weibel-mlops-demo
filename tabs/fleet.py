@@ -8,9 +8,31 @@ catalogue of drone types.
 """
 
 import json
+from pathlib import Path
+
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+
+_ACTIONS_FILE = Path(__file__).parent.parent / "artifacts" / "agent_actions.json"
+
+
+def _load_agent_actions() -> list:
+    """Load agent actions from disk (persistent) merged with session state (live)."""
+    disk = []
+    try:
+        if _ACTIONS_FILE.exists():
+            disk = json.loads(_ACTIONS_FILE.read_text())
+    except Exception:
+        pass
+    session = st.session_state.get("agent_actions", [])
+    # Merge: use disk as base, append any session entries not already in disk
+    disk_timestamps = {a.get("timestamp") for a in disk}
+    for a in session:
+        if a.get("timestamp") not in disk_timestamps:
+            disk.append(a)
+    return disk
+
 
 # ── Drone knowledge base ─────────────────────────────────────────────────────
 
@@ -56,15 +78,27 @@ def _coverage_bar(seqs: int, max_seqs: int = 1200) -> str:
 def _knowledge_base_section():
     """Render the drone knowledge base, augmented by any agent actions this session."""
     st.markdown("### Fleet knowledge base — known drone catalogue")
-    st.caption(
-        "The collective knowledge of the fleet: every drone type the model has been trained to recognise, "
-        "how much training coverage it has, and its current fleet-wide detection confidence. "
-        "Run the **🌊 Coastal drift** or **🚁 New drone** scenario in the Agent tab to see the agent "
-        "update this catalogue in real time."
-    )
+    actions = _load_agent_actions()
+    action_tools = [a for a in actions if a["tool"] in
+                    ("schedule_test_range_session", "request_synthetic_expansion", "deploy_model")]
+    if action_tools:
+        last = action_tools[-1]
+        ts   = last.get("timestamp", "")
+        st.success(
+            f"**Agent last acted at {ts}:** `{last['tool']}` — "
+            + json.dumps(last["inputs"], separators=(", ", "=")).strip("{}")
+            + "  *(catalogue updated below)*"
+        )
+    else:
+        st.caption(
+            "The collective knowledge of the fleet: every drone type the model has been trained to recognise, "
+            "how much training coverage it has, and its current fleet-wide detection confidence. "
+            "Run the **🌊 Coastal drift** or **🚁 New drone** scenario in the Agent tab to see the agent "
+            "update this catalogue in real time."
+        )
 
-    # Read any actions taken by the agent this session
-    actions = st.session_state.get("agent_actions", [])
+    # Read agent actions from disk + session state (persistent across page reloads)
+    actions = _load_agent_actions()
     scheduled_types  = set()
     expanding_types  = set()
     deploying_units  = []
@@ -749,10 +783,13 @@ def render():
             "- Personnel access log: who accessed what model artifact and when  \n"
             "- Incident response: 72-hour rollback capability with documented procedure\n\n"
             "Additional considerations:\n"
-            "- **AI Act (EU 2024/1689):** counter-UAS detection is likely a  \n"
-            "  **high-risk AI system** under Annex III — conformity assessment required  \n"
-            "- **STANAG 4586:** UAV command-and-control interoperability standard;  \n"
-            "  detection outputs feeding a C2 system must conform"
+            "- **AI Act (EU 2024/1689) Art. 2(3):** systems developed exclusively for  \n"
+            "  military or national security purposes are **explicitly excluded** from the  \n"
+            "  Act's mandatory scope. However, applying equivalent conformity practices  \n"
+            "  (risk register, data governance, accuracy gating, audit log) is NATO best  \n"
+            "  practice and expected by procurement bodies regardless of legal mandate.  \n"
+            "- **STANAG 4670:** training and qualification standard for UAS operators;  \n"
+            "  AI-assisted detection changes the operator's role and requires updated SOPs"
         )
 
     with st.expander("Encryption and key management details"):

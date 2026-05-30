@@ -158,6 +158,15 @@ def render():
         "and verify a new run beats the deployed model before promoting it to the fleet."
     )
 
+    st.info(
+        "**Reading the F1 scores:** val F1 is measured at threshold 0.3 on *soft Gaussian "
+        "heatmap labels* — a continuous ground-truth blob around the target cell, not a clean "
+        "binary mask. Hard-threshold F1 on soft labels is inherently noisy and lower than you'd "
+        "see with binary annotations: a prediction offset by one bin is penalised even if it "
+        "correctly located the target. The ROC AUC (see the ROC tab) is the more reliable "
+        "performance indicator; val F1 here measures calibration quality, not detection ceiling."
+    )
+
     col_btn, col_note = st.columns([1, 6])
     with col_btn:
         if st.button("🔄 Refresh", use_container_width=True):

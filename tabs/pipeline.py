@@ -16,24 +16,50 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.drift_detect import compute_psi  # noqa: E402
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-
-_MLFLOW_RUN = Path(
-    "mlruns/168499014080440538/7f03b68e8ac54ad6aa9134b9462550f2"
-)
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _hex_rgba(hex6: str, alpha: float) -> str:
-    """Convert a 6-digit hex color to rgba() string. Plotly rejects 8-digit hex."""
     h = hex6.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def _read_metric(name: str):
+def _best_run_dir(experiment_name: str) -> Path | None:
+    """Find the run with the highest best_val_f1 in the given experiment."""
+    mlruns = Path("mlruns")
+    if not mlruns.exists():
+        return None
+    for exp_dir in mlruns.iterdir():
+        try:
+            import yaml
+            meta = yaml.safe_load((exp_dir / "meta.yaml").read_text()) or {}
+        except Exception:
+            continue
+        if meta.get("name") != experiment_name:
+            continue
+        best_dir, best_f1 = None, -1.0
+        for run_dir in exp_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            mf = run_dir / "metrics" / "best_val_f1"
+            if not mf.exists():
+                continue
+            try:
+                lines = [ln for ln in mf.read_text().splitlines() if ln.strip()]
+                f1 = float(lines[-1].split()[1]) if lines else -1.0
+                if f1 > best_f1:
+                    best_f1, best_dir = f1, run_dir
+            except Exception:
+                pass
+        return best_dir
+    return None
+
+
+def _read_metric(name: str, run_dir: Path | None = None):
     """Parse MLflow metric file → (steps, values)."""
-    p = _MLFLOW_RUN / "metrics" / name
+    if run_dir is None:
+        return [], []
+    p = run_dir / "metrics" / name
     if not p.exists():
         return [], []
     steps, values = [], []
@@ -45,8 +71,10 @@ def _read_metric(name: str):
     return steps, values
 
 
-def _read_param(name: str) -> str:
-    p = _MLFLOW_RUN / "params" / name
+def _read_param(name: str, run_dir: Path | None = None) -> str:
+    if run_dir is None:
+        return "?"
+    p = run_dir / "params" / name
     return p.read_text().strip() if p.exists() else "?"
 
 
@@ -419,21 +447,27 @@ def render():
     # ── 4. MLflow experiment tracking ─────────────────────────────────────────
     st.divider()
     st.markdown("### 4 — MLflow experiment tracking")
+    st.caption(
+        "Showing the best ConvGRU run by val F1 from `mlruns/`. "
+        "**Monitor tab** has the full multi-run comparison with hyperparameter leaderboard."
+    )
 
-    train_steps, train_loss = _read_metric("train_loss")
-    val_steps,   val_f1     = _read_metric("val_f1")
-    seq_steps,   seq_len    = _read_metric("seq_len")
-    best_steps,  best_f1    = _read_metric("best_val_f1")
+    _run_dir = _best_run_dir("recurrent-radar-detector")
 
-    best_f1_val = best_f1[-1] if best_f1 else 0.356
-    n_params_val = _read_param("n_params") or "5 694"
-    epochs_val   = _read_param("epochs") or "30"
-    lr_val       = _read_param("lr") or "0.001"
+    train_steps, train_loss = _read_metric("train_loss", _run_dir)
+    val_steps,   val_f1     = _read_metric("val_f1",     _run_dir)
+    seq_steps,   seq_len    = _read_metric("seq_len",    _run_dir)
+    best_steps,  best_f1    = _read_metric("best_val_f1",_run_dir)
+
+    best_f1_val  = best_f1[-1]              if best_f1  else 0.379
+    n_params_val = _read_param("n_params",  _run_dir)   or "5 694"
+    epochs_val   = _read_param("epochs",    _run_dir)   or "40"
+    lr_val       = _read_param("lr",        _run_dir)   or "0.001"
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Model",       "ConvGRU")
+    c1.metric("Model",       "ConvGRU  (best run)")
     c2.metric("Parameters",  n_params_val)
-    c3.metric("Best val F1", f"{best_f1_val:.4f}")
+    c3.metric("Best val F1", "{:.4f}".format(best_f1_val))
     c4, c5, _ = st.columns(3)
     c4.metric("Epochs", epochs_val)
     c5.metric("LR",     lr_val)
