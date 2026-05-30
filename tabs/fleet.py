@@ -632,6 +632,179 @@ def render():
 
     st.divider()
 
+    # ── Edge-to-hub integration architecture ──────────────────────────────────
+    st.markdown("### Edge-to-hub integration architecture")
+    st.caption(
+        "What hardware and software would actually need to be installed on each XENTA-C unit "
+        "and at the central hub for real data to flow through the pipeline described above."
+    )
+
+    col_edge, col_hub = st.columns(2)
+
+    with col_edge:
+        st.markdown("#### 📟 On each XENTA-C unit")
+        st.markdown(
+            "**Embedded compute module** (added to the existing signal processor chassis)\n\n"
+            "- **CPU:** ARM Cortex-A72 quad-core 1.8 GHz with NEON SIMD  \n"
+            "  ConvGRU inference ≤ 0.8 ms/sweep at this clock — within the existing  \n"
+            "  10 ms sweep budget with 12× headroom  \n"
+            "- **RAM:** 4 GB LPDDR4 (model fits in L2/L3; no swap needed)  \n"
+            "- **Storage:** 32 GB eMMC + 256 GB NVMe for PPI ring buffer  \n"
+            "- **HSM:** hardware security module for key storage and model attestation  \n"
+            "- **TPM 2.0:** platform attestation; gates OTA model install on verified boot\n\n"
+            "**Data collection daemon** (lightweight Python service)\n\n"
+            "- Writes every PPI sweep to the local ring buffer (circular, 72-hour retention)  \n"
+            "- Computes PSI statistics locally — **raw PPI never leaves the unit**  \n"
+            "- Buffers PSI payloads during link outages; delivers when link restores  \n"
+            "- Verifies model signature before handing off to ONNX Runtime\n\n"
+            "**Network interface**\n\n"
+            "- Primary: 1 GbE over encrypted tactical LAN (MIL-STD-461 compliant EMI shielding)  \n"
+            "- Fallback: 4G/LTE or BLOS satellite for remote deployments  \n"
+            "- All traffic: TLS 1.3 + mutual certificate authentication (mTLS)  \n"
+            "- Uplink payload: PSI statistics + inference logs only (~5 KB/hour per unit)"
+        )
+
+    with col_hub:
+        st.markdown("#### 🖥 At the central hub (on-premise rack)")
+        st.markdown(
+            "**Compute**\n\n"
+            "- GPU training server: 2× NVIDIA A100 (or equivalent on-prem GPU)  \n"
+            "- Inference validation server: ARM development board (same ISA as XENTA)  \n"
+            "- Monitoring and serving: commodity x86 rack unit\n\n"
+            "**Data layer**\n\n"
+            "- **MinIO** — self-hosted S3-compatible object store; holds raw PPI from  \n"
+            "  test-range sessions, synthetic data, and trained model artifacts  \n"
+            "- **PostgreSQL** — MLflow backend store (replaces file store used in this demo)  \n"
+            "- **DVC remote** pointed at MinIO — deterministic data versioning\n\n"
+            "**Pipeline and model registry**\n\n"
+            "- **Gitea** — self-hosted Git + CI/CD (Gitea Actions); no external dependencies  \n"
+            "- **MLflow** — experiment tracking, model registry (Staging → Production promotion)  \n"
+            "- **DVC** — pipeline DAG, caches unchanged stages across retrains  \n\n"
+            "**Model distribution**\n\n"
+            "- Custom OTA server: signs model bundle with hub private key  \n"
+            "- Unit TPM verifies signature before allowing ONNX Runtime to load  \n"
+            "- Rollback: previous Production artifact retained; one command restores\n\n"
+            "**Message bus**\n\n"
+            "- **NATS.io** — low-latency pub/sub for PSI events and agent notifications;  \n"
+            "  works over intermittent links, persists messages during outage"
+        )
+
+    st.divider()
+
+    # ── Military compliance and data governance ────────────────────────────────
+    st.markdown("### Military compliance and data governance")
+    st.caption(
+        "Operational radar detection data is classified. Any pipeline handling it must meet "
+        "the classification, encryption, audit, and export-control requirements that apply "
+        "to NATO member-state defense procurement."
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.markdown("**Data classification**")
+        st.markdown(
+            "PPI sweeps from active operational deployments are classified at minimum  \n"
+            "**NATO RESTRICTED**. Training datasets derived from missile test-range sessions  \n"
+            "(with live drone tracks) may reach **NATO CONFIDENTIAL** depending on the  \n"
+            "target's signature data.\n\n"
+            "Controls required:\n"
+            "- Data stored on air-gapped networks only  \n"
+            "- Each dataset assigned a classification label in DVC metadata  \n"
+            "- Model artifacts inherit the classification of the highest-classified  \n"
+            "  training sample they were derived from  \n"
+            "- PSI statistics (the only data that leaves a deployed unit) are  \n"
+            "  statistical aggregates — **UNCLASSIFIED** unless the environment itself  \n"
+            "  is sensitive (e.g., active conflict zone coordinates)"
+        )
+
+    with c2:
+        st.markdown("**Export control (ITAR / EAR)**")
+        st.markdown(
+            "Counter-UAS radar detection software falls under **ITAR Category XI**  \n"
+            "(Military Electronics) if it provides a military advantage not available  \n"
+            "in commercial products. Key controls:\n\n"
+            "- A trained detection model for a specific drone type is a **controlled  \n"
+            "  technical data item** — export requires a DSP-5 license  \n"
+            "- The ONNX model artifact must be treated as a technical data package  \n"
+            "- No model weights transmitted over public internet  \n"
+            "- Nationality checks required for anyone with model access  \n"
+            "- Denmark-specific: dual Danish/EU export control under  \n"
+            "  **Rådets forordning (EF) 428/2009** (dual-use list)  \n"
+            "- NATO deployments: covered under **GSOMIA** (General Security of  \n"
+            "  Military Information Agreement) with receiving nation"
+        )
+
+    with c3:
+        st.markdown("**Audit and chain of custody**")
+        st.markdown(
+            "For any model deployed to a NATO system, regulators require a  \n"
+            "demonstrable chain of custody from raw sensor data to ONNX artifact.\n\n"
+            "Required records:\n"
+            "- Immutable append-only audit log (write-once storage, cryptographic  \n"
+            "  hash chain) covering every pipeline run, model promotion, and OTA push  \n"
+            "- DVC lock file committed to Gitea — exact hash of every training  \n"
+            "  input reproducible from the run ID  \n"
+            "- MLflow run metadata retained indefinitely (not just the latest N runs)  \n"
+            "- Personnel access log: who accessed what model artifact and when  \n"
+            "- Incident response: 72-hour rollback capability with documented procedure\n\n"
+            "Additional considerations:\n"
+            "- **AI Act (EU 2024/1689):** counter-UAS detection is likely a  \n"
+            "  **high-risk AI system** under Annex III — conformity assessment required  \n"
+            "- **STANAG 4586:** UAV command-and-control interoperability standard;  \n"
+            "  detection outputs feeding a C2 system must conform"
+        )
+
+    with st.expander("Encryption and key management details"):
+        st.markdown("""
+| Layer | Mechanism | Standard |
+|---|---|---|
+| Data at rest (NVMe) | LUKS2 full-disk encryption, TPM2-sealed key | FIPS 140-3 Level 2 |
+| Data in transit | TLS 1.3, ECDHE-AES-256-GCM, mTLS both sides | NSA Suite B / CNSA |
+| Model artifact signing | Ed25519 signature, hub HSM private key | FIPS 186-5 |
+| PSI payload | AES-256-GCM, per-session key via ECDH | FIPS 197 |
+| Key storage on unit | TPM 2.0 PCR-sealed; unseals only on verified boot | FIPS 140-3 Level 2 |
+| Key storage on hub | HashiCorp Vault with HSM backend (Thales Luna) | FIPS 140-3 Level 3 |
+| Audit log integrity | SHA-3-256 hash chain, notarised to on-prem timestamp authority | RFC 3161 |
+        """)
+
+    st.divider()
+
+    # ── Technology stack ───────────────────────────────────────────────────────
+    st.markdown("### Technology stack")
+    st.caption(
+        "Chosen for air-gapped operation, military-grade security posture, and the "
+        "constraint that the full stack must run on-premise with zero external cloud dependencies."
+    )
+
+    st.markdown("""
+| Layer | Component | Version / config | Rationale |
+|---|---|---|---|
+| **Edge inference** | ONNX Runtime | 1.17+, ARM NEON backend | <1 ms/sweep on Cortex-A72; no GPU required; single binary deploy |
+| **Edge data daemon** | Python 3.11 systemd service | Compiled to standalone binary (PyInstaller) | Minimal footprint; PSI computed locally; no raw PPI egress |
+| **Message bus** | NATS.io | 2.x, JetStream persistence | Sub-millisecond pub/sub; works over intermittent links; embedded TLS |
+| **Data lake** | MinIO | RELEASE.2024+, erasure-coded | S3-compatible; full air-gap; object versioning; legal hold support |
+| **ML pipeline** | DVC + MLflow | DVC 3.x, MLflow 2.x | Deterministic reproducibility; hash-verified data lineage |
+| **Experiment DB** | PostgreSQL | 15+, local | Replaces MLflow file store; ACID guarantees for run metadata |
+| **Model registry** | MLflow Model Registry | Staging → Production promotion gates | Blocked by accuracy and latency thresholds before promotion |
+| **Version control** | Gitea | 1.21+, self-hosted | No GitHub/GitLab dependency; built-in CI (Gitea Actions) |
+| **CI/CD** | Gitea Actions | Self-hosted runners | DVC repro triggered on data push; accuracy gate blocks merge |
+| **Container runtime** | Podman (rootless) | 4.x | No root daemon; better security posture; OCI-compatible |
+| **Orchestration** | K3s | Lightweight Kubernetes | Runs on edge ARM hardware; manages ONNX service + daemon rollout |
+| **Secrets management** | HashiCorp Vault | 1.15+, HSM-backed | Audit log; dynamic secrets; seals on network loss |
+| **Monitoring** | Prometheus + Grafana | On-prem | PSI time-series; inference latency p50/p95; sweep throughput |
+| **OTA distribution** | Custom update server | Python + Ed25519 signing | TPM-gated install; rollback on failure; classified artifact handling |
+| **Training compute** | Bare-metal GPU server | 2× A100 / H100 | No cloud GPU; data never leaves the network boundary |
+    """)
+
+    st.info(
+        "**Next tab →** Agent: a Claude-powered advisor that interprets PSI drift events "
+        "from this fleet, queries the MLflow run history, and recommends a concrete retraining "
+        "or rollback action — the autonomous decision layer on top of the architecture above."
+    )
+
+    st.divider()
+
     # ── The compounding argument ───────────────────────────────────────────────
     st.success(
         "**The central argument:** a XENTA fleet running this pipeline would not stay at the "
