@@ -80,9 +80,14 @@ def _load_run(run_dir: Path) -> dict | None:
                 except Exception:
                     pass
 
+    # MLflow may write status as an integer (1=RUNNING,3=FINISHED,4=FAILED)
+    _STATUS_MAP = {1: "RUNNING", 2: "SCHEDULED", 3: "FINISHED", 4: "FAILED", 5: "KILLED"}
+    raw_status  = meta.get("status", "UNKNOWN")
+    status      = _STATUS_MAP.get(raw_status, str(raw_status))
+
     return {
-        "run_id":     meta.get("run_id", run_dir.name),
-        "status":     meta.get("status", "UNKNOWN"),
+        "run_id":     str(meta.get("run_id", run_dir.name)),
+        "status":     status,
         "start_time": meta.get("start_time", 0),
         "metrics":    metrics,
         "params":     params,
