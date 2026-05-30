@@ -1,0 +1,14 @@
+artifact_uri: /home/bach/dev/work/weibel-mlops-demo/mlruns/168499014080440538/bc77a966fe1149bdaa454eb79cf30f40/artifacts
+end_time: 1780153362089
+entry_point_name: ''
+experiment_id: '168499014080440538'
+lifecycle_stage: active
+run_id: bc77a966fe1149bdaa454eb79cf30f40
+run_name: unique-croc-327
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780151280336
+status: 3
+tags: []
+user_id: bach
