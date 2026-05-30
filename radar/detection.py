@@ -564,7 +564,7 @@ def _dp_tbd_score(ppi: np.ndarray, max_vr: int = 3, max_vaz: int = 2) -> np.ndar
 
 
 @st.cache_data(show_spinner="Computing ROC curves (100 trials)…")
-def _roc_data(snr_db_val: float, n: int = 100, _v: int = 11):
+def _roc_data(snr_db_val: float, n: int = 100, _v: int = 12):
     params = load_params()
     session = load_cnn_session()
     gru_session = load_gru_session()
@@ -684,31 +684,40 @@ def _roc_data(snr_db_val: float, n: int = 100, _v: int = 11):
             gru_sc.append(float(win.max()) if win.size else 0.0)
 
         # ── LRT and DP-TBD ────────────────────────────────────────────────────
-        lrt_map = _lrt_score(ppi_t)
         tbd_map = _dp_tbd_score(ppi_t)
 
         if has_t:
-            lrt_path_max = 0.0
-            tbd_path_max = 0.0
+            # LRT: path-integrated score (sum per-sweep window-max^2 along oracle path)
+            lrt_nf     = np.percentile(ppi_t, 10, axis=(0, 1), keepdims=True).clip(1e-6)
+            lrt_normed = ppi_t / lrt_nf
+            lrt_score  = 0.0
+            az_final = az_b = 0
+            r_final  = r_b  = 0
             for sw in range(N_SW):
                 r_t  = r0_t + sw * vr_t
                 az_t = (az0_t + sw * vaz_t) % 360.0
                 r_b  = int(np.round(r_t).clip(0, N_RANGE - 1))
                 az_b = int(np.round(az_t * N_AZ / 360.0)) % N_AZ
-                win_l = lrt_map[max(0, az_b - 1):az_b + 2,
-                                max(0, r_b  - 1):r_b  + 2]
-                win_t = tbd_map[max(0, az_b - 1):az_b + 2,
-                                max(0, r_b  - 1):r_b  + 2]
-                lrt_path_max = max(lrt_path_max, float(win_l.max()) if win_l.size else 0.0)
-                tbd_path_max = max(tbd_path_max, float(win_t.max()) if win_t.size else 0.0)
-            lrt_sc.append(lrt_path_max)
-            tbd_sc.append(tbd_path_max)
+                win  = lrt_normed[sw, max(0, az_b - 1):az_b + 2,
+                                      max(0, r_b  - 1):r_b  + 2]
+                lrt_score += float((win ** 2).max()) if win.size else 0.0
+            lrt_sc.append(lrt_score)
+            # TBD: score at final oracle position in DP map
+            win_t = tbd_map[max(0, az_b - 1):az_b + 2,
+                            max(0, r_b  - 1):r_b  + 2]
+            tbd_sc.append(float(win_t.max()) if win_t.size else 0.0)
         else:
-            win_l = lrt_map[max(0, az_rand - 1):az_rand + 2,
-                            max(0, r_rand  - 1):r_rand  + 2]
+            # LRT: path-integral at the same random position for all sweeps
+            lrt_nf     = np.percentile(ppi_t, 10, axis=(0, 1), keepdims=True).clip(1e-6)
+            lrt_normed = ppi_t / lrt_nf
+            lrt_score  = 0.0
+            for sw in range(N_SW):
+                win = lrt_normed[sw, max(0, az_rand - 1):az_rand + 2,
+                                     max(0, r_rand  - 1):r_rand  + 2]
+                lrt_score += float((win ** 2).max()) if win.size else 0.0
+            lrt_sc.append(lrt_score)
             win_t = tbd_map[max(0, az_rand - 1):az_rand + 2,
                             max(0, r_rand  - 1):r_rand  + 2]
-            lrt_sc.append(float(win_l.max()) if win_l.size else 0.0)
             tbd_sc.append(float(win_t.max()) if win_t.size else 0.0)
 
         # ── Transformer ───────────────────────────────────────────────────────

@@ -38,13 +38,9 @@ N_CAL   = 200      # clutter scenes for threshold calibration
 N_TRIALS = 30      # trials per SNR point (matches existing sweep)
 
 
-def _lrt(ppi):
-    nf = np.percentile(ppi, 10, axis=(1, 2), keepdims=True).clip(1e-6)
-    return ((ppi / nf) ** 2).sum(0)
-
-
 def _tbd(ppi, max_vr=3, max_vaz=2):
-    nf     = np.percentile(ppi, 10, axis=(1, 2), keepdims=True).clip(1e-6)
+    # axis=(0,1): per-range-bin noise floor (range-invariant, consistent with detection.py)
+    nf     = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-6)
     normed = (ppi / nf).astype(np.float32)
     S      = normed[0].copy()
     size   = (2 * max_vaz + 1, 2 * max_vr + 1)
@@ -66,6 +62,25 @@ def _window_max(score_map, az_b, r_b):
     return float(win.max()) if win.size else 0.0
 
 
+def _lrt_path(ppi, az_path, r_path):
+    """Path-integrated LRT: sum per-sweep window-max of squared normed amplitudes."""
+    nf     = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-6)
+    normed = ppi / nf  # (N_SW, N_AZ, N_RANGE)
+    score  = 0.0
+    for sw, (az_b, r_b) in enumerate(zip(az_path, r_path)):
+        az_lo = (az_b - W) % N_AZ
+        az_hi = (az_b + W + 1) % N_AZ
+        r_lo  = max(0, r_b - W)
+        r_hi  = min(N_RANGE, r_b + W + 1)
+        if az_lo < az_hi:
+            patch = normed[sw, az_lo:az_hi, r_lo:r_hi]
+        else:
+            patch = np.concatenate([normed[sw, az_lo:, r_lo:r_hi],
+                                    normed[sw, :az_hi, r_lo:r_hi]])
+        score += float((patch ** 2).max()) if patch.size else 0.0
+    return score
+
+
 # ── Step 1: measure CFAR Pfa on clutter-only scenes ─────────────────────────
 print("Measuring CFAR Pfa …")
 cfar = PPICFARDetector(threshold_factor=2.5)
@@ -80,26 +95,22 @@ print(f"  CFAR Pfa = {cfar_pfa:.4f}")
 
 # ── Step 2: calibrate LRT and DP-TBD thresholds at matched Pfa ──────────────
 print("Calibrating LRT / DP-TBD thresholds …")
-# Calibrate at the same evaluation level used for Pd:
-# max score over N_SW randomly-placed oracle windows per clutter scene,
-# so the false-positive rate matches how we evaluate target trials.
+# LRT calibration: path-integral score over N_SW independent random positions,
+# matching the per-sweep integration used in detection.
+# TBD calibration: score at a single random endpoint, matching detection readout.
 rng_cal2 = np.random.default_rng(42)
 lrt_ref_vals, tbd_ref_vals = [], []
 
 for _ in range(N_CAL):
-    seed  = int(rng_cal2.integers(1, 1_000_000))
-    ppi_c = generate_clutter_only(params, seed=seed)
-    lm    = _lrt(ppi_c)
-    tm    = _tbd(ppi_c)
-    # Simulate a "fake target path" of N_SW random positions
-    lrt_path_max = tbd_path_max = 0.0
-    for _ in range(N_SW):
-        az_r = int(rng_cal2.integers(0, N_AZ))
-        r_r  = int(rng_cal2.integers(W, N_RANGE - W))
-        lrt_path_max = max(lrt_path_max, _window_max(lm, az_r, r_r))
-        tbd_path_max = max(tbd_path_max, _window_max(tm, az_r, r_r))
-    lrt_ref_vals.append(lrt_path_max)
-    tbd_ref_vals.append(tbd_path_max)
+    seed    = int(rng_cal2.integers(1, 1_000_000))
+    ppi_c   = generate_clutter_only(params, seed=seed)
+    tm      = _tbd(ppi_c)
+    az_path = [int(rng_cal2.integers(0, N_AZ))     for _ in range(N_SW)]
+    r_path  = [int(rng_cal2.integers(W, N_RANGE-W)) for _ in range(N_SW)]
+    lrt_ref_vals.append(_lrt_path(ppi_c, az_path, r_path))
+    az_end  = int(rng_cal2.integers(0, N_AZ))
+    r_end   = int(rng_cal2.integers(W, N_RANGE - W))
+    tbd_ref_vals.append(_window_max(tm, az_end, r_end))
 
 lrt_thr = float(np.percentile(lrt_ref_vals, 100 * (1.0 - cfar_pfa)))
 tbd_thr = float(np.percentile(tbd_ref_vals, 100 * (1.0 - cfar_pfa)))
@@ -148,8 +159,6 @@ for snr in snr_vals:
         ppi_t, _, _ = generate_ppi_sequence(p, seed=seed)
         tgt = p["target"]
 
-        lm = _lrt(ppi_t)
-        tm = _tbd(ppi_t)
         if tf_session is not None:
             nf     = np.percentile(ppi_t, 10, axis=(0, 1), keepdims=True).clip(1e-3)
             stack  = (ppi_t / nf).clip(0, 30).astype(np.float32)[np.newaxis]
@@ -157,16 +166,25 @@ for snr in snr_vals:
         else:
             tf_map = None
 
-        lrt_best = tbd_best = tf_best = 0.0
+        # Precompute oracle path bins for all three algorithms
+        az_path, r_path = [], []
         for sw in range(N_SW):
-            r_sw  = float(tgt["range_bin"])  + sw * float(tgt["radial_velocity"])
+            r_sw  = float(tgt["range_bin"]) + sw * float(tgt["radial_velocity"])
             az_sw = (float(tgt["azimuth_deg"]) + sw * float(tgt["tangential_velocity"])) % 360.0
-            az_b  = int(round(az_sw / 360 * N_AZ)) % N_AZ
-            r_b   = int(np.clip(round(r_sw), 0, N_RANGE - 1))
-            lrt_best = max(lrt_best, _window_max(lm, az_b, r_b))
-            tbd_best = max(tbd_best, _window_max(tm, az_b, r_b))
-            if tf_map is not None:
-                tf_best = max(tf_best, _window_max(tf_map, az_b, r_b))
+            az_path.append(int(round(az_sw / 360 * N_AZ)) % N_AZ)
+            r_path.append(int(np.clip(round(r_sw), 0, N_RANGE - 1)))
+
+        # LRT: path-integrated score (sum per-sweep window-max along oracle path)
+        lrt_best = _lrt_path(ppi_t, az_path, r_path)
+
+        # TBD: score at final oracle position in DP map
+        tm       = _tbd(ppi_t)
+        tbd_best = _window_max(tm, az_path[-1], r_path[-1])
+
+        tf_best = 0.0
+        if tf_map is not None:
+            for sw in range(N_SW):
+                tf_best = max(tf_best, _window_max(tf_map, az_path[sw], r_path[sw]))
 
         if lrt_best > lrt_thr: lrt_hits += 1
         if tbd_best > tbd_thr: tbd_hits += 1

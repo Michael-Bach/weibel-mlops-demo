@@ -30,6 +30,25 @@ def _dp_tbd_score(ppi: np.ndarray, max_vr: int = 3, max_vaz: int = 2) -> np.ndar
         S = normed[k] + maximum_filter(S, size=size, mode=('wrap', 'nearest'))
     return S
 
+
+def _lrt_path_score(ppi: np.ndarray, az_path: list, r_path: list, W: int = 5) -> float:
+    """Path-integrated LRT: sum per-sweep window-max of squared normed amplitudes."""
+    nf     = np.percentile(ppi, 10, axis=(0, 1), keepdims=True).clip(1e-6)
+    normed = ppi / nf
+    score  = 0.0
+    for sw, (az_b, r_b) in enumerate(zip(az_path, r_path)):
+        az_lo = (az_b - W) % N_AZ
+        az_hi = (az_b + W + 1) % N_AZ
+        r_lo  = max(0, r_b - W)
+        r_hi  = min(N_RANGE, r_b + W + 1)
+        if az_lo < az_hi:
+            patch = normed[sw, az_lo:az_hi, r_lo:r_hi]
+        else:
+            patch = np.concatenate([normed[sw, az_lo:, r_lo:r_hi],
+                                    normed[sw, :az_hi, r_lo:r_hi]])
+        score += float((patch ** 2).max()) if patch.size else 0.0
+    return score
+
 N_TRIALS = 400  # half target, half clutter
 SNR_LIST  = [0.0, 3.0, 6.0]
 SEED_BASE = 42
@@ -106,7 +125,6 @@ def collect_scores(snr_db: float):
         gru_map = h[0, 0]
 
         detect_seq = cfar_d.detect_sequence(ppi)
-        lrt_map    = _lrt_score(ppi)
         tbd_map    = _dp_tbd_score(ppi)
 
         # Transformer: normalise stack and run session
@@ -121,17 +139,36 @@ def collect_scores(snr_db: float):
         if has_t:
             az_i = int(round(tgt_az)) % N_AZ
             r_i  = int(np.clip(round(tgt_r), W, N_RANGE - W - 1))
+            # LRT: path-integrated score along oracle path
+            az_path = []
+            r_path  = []
+            for sw in range(N_SW):
+                r_sw  = float(p["target"]["range_bin"]) + sw * float(p["target"]["radial_velocity"])
+                az_sw = (float(p["target"]["azimuth_deg"]) + sw * float(p["target"]["tangential_velocity"])) % 360.0
+                az_path.append(int(round(az_sw / 360 * N_AZ)) % N_AZ)
+                r_path.append(int(np.clip(round(r_sw), 0, N_RANGE - 1)))
+            lrt_sc.append(_lrt_path_score(ppi, az_path, r_path, W))
+            # TBD: score at final oracle position
+            r_lo_t  = max(0, r_path[-1] - W); r_hi_t = min(N_RANGE, r_path[-1] + W + 1)
+            az_tidx = np.arange(az_path[-1] - W, az_path[-1] + W + 1) % N_AZ
+            tbd_sc.append(float(tbd_map[az_tidx, r_lo_t:r_hi_t].max()))
         else:
             az_i = int(rng.integers(0, N_AZ))
             r_i  = int(rng.integers(W, N_RANGE - W))
+            # LRT: path-integral at same random position for all sweeps
+            az_path = [az_i] * N_SW
+            r_path  = [r_i]  * N_SW
+            lrt_sc.append(_lrt_path_score(ppi, az_path, r_path, W))
+            # TBD: single random position
+            r_lo_t  = max(0, r_i - W); r_hi_t = min(N_RANGE, r_i + W + 1)
+            az_tidx = np.arange(az_i - W, az_i + W + 1) % N_AZ
+            tbd_sc.append(float(tbd_map[az_tidx, r_lo_t:r_hi_t].max()))
 
         r_lo   = max(0, r_i - W); r_hi = min(N_RANGE, r_i + W + 1)
         az_idx = np.arange(az_i - W, az_i + W + 1) % N_AZ
 
         cnn_sc.append(float(cnn_map[az_idx, r_lo:r_hi].max()))
         gru_sc.append(float(gru_map[az_idx, r_lo:r_hi].max()))
-        lrt_sc.append(float(lrt_map[az_idx, r_lo:r_hi].max()))
-        tbd_sc.append(float(tbd_map[az_idx, r_lo:r_hi].max()))
         tf_sc.append(float(tf_map[az_idx, r_lo:r_hi].max()))
 
         cfar_near = sum(
