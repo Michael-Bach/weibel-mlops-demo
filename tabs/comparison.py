@@ -212,7 +212,8 @@ def render():
 
     # Cell-level Pd from CSV
     def _csv_pd(col, snr):
-        if _df is None or col not in _df.columns: return "—"
+        if _df is None or col not in _df.columns:
+            return "—"
         row = _df[np.isclose(_df["snr_db"], snr, atol=0.5)]
         return f"{row[col].values[0]*100:.0f} %" if len(row) else "—"
 

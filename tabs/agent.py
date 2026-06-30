@@ -8,6 +8,7 @@ Claude-powered advisor with:
   - Follow-up conversation after the initial recommendation
 """
 
+import importlib.util
 import json
 import os
 import traceback
@@ -103,11 +104,7 @@ def _load_deployed() -> dict:
                 pass
     return out
 
-try:
-    import anthropic as _anthropic_mod
-    _ANTHROPIC_OK = True
-except ImportError:
-    _ANTHROPIC_OK = False
+_ANTHROPIC_OK = importlib.util.find_spec("anthropic") is not None
 
 # ── Preset scenarios ──────────────────────────────────────────────────────────
 
@@ -404,7 +401,8 @@ def _run_tool(name: str, inputs: dict, fleet: list) -> str:
 
     # ── Action tools ──────────────────────────────────────────────────────────
     if name == "schedule_test_range_session":
-        import random, string
+        import random
+        import string
         sid = "TRS-2026-" + "".join(random.choices(string.digits, k=4))
         result = {
             "session_id":   sid,
@@ -422,7 +420,8 @@ def _run_tool(name: str, inputs: dict, fleet: list) -> str:
         return json.dumps(result, indent=2)
 
     if name == "request_synthetic_expansion":
-        import random, string
+        import random
+        import string
         jid = "SYN-2026-" + "".join(random.choices(string.digits, k=4))
         n = inputs.get("n_sequences", 1000)
         result = {

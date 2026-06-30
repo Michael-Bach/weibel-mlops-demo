@@ -186,9 +186,12 @@ for snr in snr_vals:
             for sw in range(N_SW):
                 tf_best = max(tf_best, _window_max(tf_map, az_path[sw], r_path[sw]))
 
-        if lrt_best > lrt_thr: lrt_hits += 1
-        if tbd_best > tbd_thr: tbd_hits += 1
-        if tf_best  > tf_thr:  tf_hits  += 1
+        if lrt_best > lrt_thr:
+            lrt_hits += 1
+        if tbd_best > tbd_thr:
+            tbd_hits += 1
+        if tf_best > tf_thr:
+            tf_hits += 1
 
     lrt_pd.append(lrt_hits / N_TRIALS)
     tbd_pd.append(tbd_hits / N_TRIALS)

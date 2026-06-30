@@ -61,9 +61,12 @@ _STATUS_BADGE = {
 }
 
 def _conf_color(c):
-    if c is None:   return "#888"
-    if c >= 0.90:   return "#2ecc71"
-    if c >= 0.80:   return "#f39c12"
+    if c is None:
+        return "#888"
+    if c >= 0.90:
+        return "#2ecc71"
+    if c >= 0.80:
+        return "#f39c12"
     return "#e74c3c"
 
 def _coverage_bar(seqs: int, max_seqs: int = 1200) -> str:
@@ -427,7 +430,6 @@ def _triad_fig() -> go.Figure:
             showlegend=False, hoverinfo="skip",
         ))
         # Label above/below node
-        lpos = "top center" if vy > 0 else "bottom center"
         fig.add_annotation(
             x=vx, y=vy,
             text=f"<b>{label}</b>",

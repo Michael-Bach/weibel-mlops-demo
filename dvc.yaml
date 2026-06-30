@@ -1,46 +1,103 @@
-stages:
-  generate:
-    cmd: PYTHONPATH=. python src/data/generate.py
-    deps:
-      - src/data/generate.py
-      - params.yaml
-    params:
-      - data
-    outs:
-      - data/raw/X.npy
-      - data/raw/y.npy
-      - data/processed/X_train.npy
-      - data/processed/X_val.npy
-      - data/processed/y_train.npy
-      - data/processed/y_val.npy
+# DVC pipeline DAG — the three headline detectors shown in the demo.
+# Data is generated on the fly (seeded) inside each training script, so there
+# is no separate data-generation stage; reproducibility comes from the params
+# files + seeds tracked as stage deps.
+#
+#   dvc repro train_cnn export_cnn        # CNN (batch detector)
+#   dvc repro train_gru export_gru        # ConvGRU (streaming detector)
+#   dvc repro train_transformer export_transformer
+#
+# ONNX outputs and metrics are git-tracked (cache: false) because the
+# Streamlit app loads them at runtime.
 
-  train:
-    cmd: PYTHONPATH=. python src/training/train.py
+stages:
+  train_cnn:
+    cmd: PYTHONPATH=. python src/train_ppi.py params_ppi.yaml
     deps:
-      - src/training/train.py
-      - src/models/classifier.py
-      - data/processed/X_train.npy
-      - data/processed/X_val.npy
-      - data/processed/y_train.npy
-      - data/processed/y_val.npy
-      - params.yaml
+      - src/train_ppi.py
+      - src/data/ppi_generator.py
+      - src/model/ppi_cnn.py
     params:
-      - model
-      - training
+      - params_ppi.yaml:
+          - radar
+          - data
+          - model
+          - training
     outs:
-      - artifacts/model_best.pt
+      - artifacts/ppi_model_best.pt
     metrics:
-      - artifacts/metrics.json:
+      - artifacts/ppi_metrics.json:
           cache: false
 
-  export:
-    cmd: PYTHONPATH=. python scripts/export_onnx.py
+  export_cnn:
+    cmd: PYTHONPATH=. python scripts/export_onnx_ppi.py
     deps:
-      - scripts/export_onnx.py
-      - src/models/classifier.py
-      - artifacts/model_best.pt
-      - params.yaml
+      - scripts/export_onnx_ppi.py
+      - src/model/ppi_cnn.py
+      - artifacts/ppi_model_best.pt
     params:
-      - onnx
+      - params_ppi.yaml:
+          - onnx
     outs:
-      - artifacts/model.onnx
+      - artifacts/ppi_model.onnx:
+          cache: false
+
+  train_gru:
+    cmd: PYTHONPATH=. python src/train_recurrent.py params_recurrent.yaml
+    deps:
+      - src/train_recurrent.py
+      - src/data/ppi_generator.py
+      - src/data/sequence_dataset.py
+      - src/model/conv_gru.py
+    params:
+      - params_recurrent.yaml:
+          - radar
+          - data
+          - model
+          - training
+    outs:
+      - artifacts/recurrent_model_best.pt
+    metrics:
+      - artifacts/recurrent_metrics.json:
+          cache: false
+
+  export_gru:
+    cmd: PYTHONPATH=. python scripts/export_onnx_recurrent.py
+    deps:
+      - scripts/export_onnx_recurrent.py
+      - src/model/conv_gru.py
+      - artifacts/recurrent_model_best.pt
+    params:
+      - params_recurrent.yaml:
+          - onnx
+    outs:
+      - artifacts/recurrent_model.onnx:
+          cache: false
+
+  train_transformer:
+    cmd: PYTHONPATH=. python src/train_transformer.py params_ppi.yaml
+    deps:
+      - src/train_transformer.py
+      - src/data/ppi_generator.py
+      - src/model/ppi_transformer.py
+    params:
+      - params_ppi.yaml:
+          - radar
+          - data
+          - training
+    outs:
+      - artifacts/transformer_model_best.pt:
+          cache: false
+    metrics:
+      - artifacts/transformer_metrics.json:
+          cache: false
+
+  export_transformer:
+    cmd: PYTHONPATH=. python scripts/export_onnx_transformer.py
+    deps:
+      - scripts/export_onnx_transformer.py
+      - src/model/ppi_transformer.py
+      - artifacts/transformer_model_best.pt
+    outs:
+      - artifacts/transformer_model.onnx:
+          cache: false

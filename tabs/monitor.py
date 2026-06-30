@@ -225,7 +225,6 @@ def render():
 
         # Sort by best_val_f1 for ranking
         ranked = sorted(runs, key=lambda r: r["metrics"].get("best_val_f1", 0), reverse=True)
-        best_run = ranked[0]
 
         # ── metrics strip ────────────────────────────────────────────────────
         n_cols = min(len(runs), 4)
@@ -246,7 +245,7 @@ def render():
             col  = colors[i % len(colors)]
             icon   = _MEDALS[i] if i < 3 else f"#{i+1}"
             lp     = r["params"]
-            f1_str = "—" if f1 is None else "{:.3f}".format(f1)
+            f1_str = "—" if f1 is None else f"{f1:.3f}"
             with m_cols[i + 1]:
                 st.markdown(
                     f"<div style='text-align:center;border-left:3px solid {col};padding-left:8px'>"

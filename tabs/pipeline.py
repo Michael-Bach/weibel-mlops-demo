@@ -467,7 +467,7 @@ def render():
     c1, c2, c3 = st.columns(3)
     c1.metric("Model",       "ConvGRU  (best run)")
     c2.metric("Parameters",  n_params_val)
-    c3.metric("Best val F1", "{:.4f}".format(best_f1_val))
+    c3.metric("Best val F1", f"{best_f1_val:.4f}")
     c4, c5, _ = st.columns(3)
     c4.metric("Epochs", epochs_val)
     c5.metric("LR",     lr_val)
@@ -491,10 +491,10 @@ def render():
     # Shade curriculum phases (seq_len 5 → 10 → 15)
     if seq_steps and seq_len:
         phases, cur_len, phase_start = [], seq_len[0], seq_steps[0]
-        for i, (s, l) in enumerate(zip(seq_steps, seq_len)):
-            if l != cur_len:
+        for i, (s, length) in enumerate(zip(seq_steps, seq_len)):
+            if length != cur_len:
                 phases.append((phase_start, seq_steps[i - 1], cur_len))
-                cur_len, phase_start = l, s
+                cur_len, phase_start = length, s
         phases.append((phase_start, seq_steps[-1], cur_len))
 
         phase_colors = {

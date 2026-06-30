@@ -24,7 +24,6 @@ Patch grid: 30 az × 16 range  (6-bin × 4-bin patches on 180×64 PPI)
 Parameters: ~19 k  (comparable to the CNN)
 """
 
-import math
 import torch
 import torch.nn as nn
 

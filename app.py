@@ -5,6 +5,7 @@ Run:
     streamlit run app.py
 """
 
+import hmac
 import sys
 from pathlib import Path
 
@@ -24,6 +25,25 @@ st.set_page_config(
     page_icon="📡",
     layout="wide",
 )
+
+# ── Auth gate ──────────────────────────────────────────────────────────────────
+# Only active when APP_PASSWORD is set in secrets; otherwise the app stays public.
+
+try:
+    _app_password = st.secrets.get("APP_PASSWORD", "")
+except FileNotFoundError:  # no secrets.toml in local dev
+    _app_password = ""
+
+if _app_password and not st.session_state.get("authenticated"):
+    st.markdown("### Access required")
+    pwd = st.text_input("Passkey", type="password", label_visibility="collapsed", placeholder="Enter passkey")
+    if pwd:
+        if hmac.compare_digest(pwd, _app_password):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect passkey.")
+    st.stop()
 
 # ── Cached resources ───────────────────────────────────────────────────────────
 

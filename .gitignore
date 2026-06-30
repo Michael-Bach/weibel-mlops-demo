@@ -30,6 +30,9 @@ mlflow.db
 .env
 .streamlit/secrets.toml
 
+# Local archives / scratch
+*.zip
+
 # DVC internals (keep .dvc/ itself, ignore cache)
 .dvc/cache/
 .dvc/tmp/artifacts/

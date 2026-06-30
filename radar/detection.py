@@ -691,8 +691,8 @@ def _roc_data(snr_db_val: float, n: int = 100, _v: int = 12):
             lrt_nf     = np.percentile(ppi_t, 10, axis=(0, 1), keepdims=True).clip(1e-6)
             lrt_normed = ppi_t / lrt_nf
             lrt_score  = 0.0
-            az_final = az_b = 0
-            r_final  = r_b  = 0
+            az_b = 0
+            r_b  = 0
             for sw in range(N_SW):
                 r_t  = r0_t + sw * vr_t
                 az_t = (az0_t + sw * vaz_t) % 360.0
