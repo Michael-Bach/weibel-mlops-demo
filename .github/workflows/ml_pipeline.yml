@@ -35,13 +35,13 @@ jobs:
       # ── Training (CNN) ───────────────────────────────────────────────────────
       - name: Train CNN detector
         env:
-          MLFLOW_TRACKING_URI: ./mlruns
+          MLFLOW_TRACKING_URI: sqlite:///mlflow_ci.db
         run: PYTHONPATH=. python src/train_ppi.py params_ppi.yaml
 
       # ── ONNX export ───────────────────────────────────────────────────────────
       - name: Export CNN to ONNX
         env:
-          MLFLOW_TRACKING_URI: ./mlruns
+          MLFLOW_TRACKING_URI: sqlite:///mlflow_ci.db
         run: PYTHONPATH=. python scripts/export_onnx_ppi.py
 
       # ── Upload artifacts ──────────────────────────────────────────────────────
