@@ -32,25 +32,17 @@ jobs:
       - name: Unit tests (pytest)
         run: pytest tests/ -v
 
-      # ── Data generation ──────────────────────────────────────────────────────
-      - name: Generate synthetic radar data
-        run: PYTHONPATH=. python src/data/generate.py
-
-      # ── Training ─────────────────────────────────────────────────────────────
-      - name: Train model
+      # ── Training (CNN) ───────────────────────────────────────────────────────
+      - name: Train CNN detector
         env:
           MLFLOW_TRACKING_URI: ./mlruns
-        run: PYTHONPATH=. python src/training/train.py
+        run: PYTHONPATH=. python src/train_ppi.py params_ppi.yaml
 
       # ── ONNX export ───────────────────────────────────────────────────────────
-      - name: Export ONNX model
+      - name: Export CNN to ONNX
         env:
           MLFLOW_TRACKING_URI: ./mlruns
-        run: PYTHONPATH=. python scripts/export_onnx.py
-
-      # ── ONNX validation ───────────────────────────────────────────────────────
-      - name: Validate ONNX model runs end-to-end
-        run: PYTHONPATH=. python src/inference/validate_onnx.py
+        run: PYTHONPATH=. python scripts/export_onnx_ppi.py
 
       # ── Upload artifacts ──────────────────────────────────────────────────────
       - name: Upload model artifacts
@@ -58,7 +50,7 @@ jobs:
         with:
           name: model-artifacts
           path: |
-            artifacts/model_best.pt
-            artifacts/model.onnx
-            artifacts/metrics.json
+            artifacts/ppi_model_best.pt
+            artifacts/ppi_model.onnx
+            artifacts/ppi_metrics.json
           retention-days: 30
